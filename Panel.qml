@@ -188,8 +188,8 @@ Panel {
     Text {
       id: barGlyph
       anchors.centerIn: parent
-      text: "M"
-      color: "#ff0000"
+      text: "󰒋"
+      color: root.stateColor
       font.family: bar ? bar.fontFamily : "monospace"
       font.pixelSize: 16
       opacity: root.stateKind === "off" ? 0.72 : 1
