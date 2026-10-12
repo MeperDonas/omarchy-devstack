@@ -7,21 +7,10 @@ and the browser, in order.
 Built for [Omarchy](https://omarchy.org/) (Hyprland + Quickshell). Nothing is
 hardcoded to one project: you declare each stack in a JSON file.
 
-```
-┌─ bar ───────────────────────────────────────────────────────────┐
-│  󰒋  ←  grey off · red error · yellow working · green up          │
-└────────────────────────────────────────────────────────────────┘
-        click
-   ┌──────────────────────────────┐
-   │            MeperPOS          │
-   │      ( ● Arriba )            │
-   │  (● postgres) (● backend)    │
-   │      (● frontend)            │
-   │  [Levantar]      [Bajar]     │
-   │  [Abrir]         [Logs]      │
-   │  [Reiniciar]     [Menú]      │
-   └──────────────────────────────┘
-```
+![The devstack popup on the Omarchy bar](docs/screenshot.png)
+
+The icon is grey when the stack is off, red on error, yellow while lifting and
+green when every service answers.
 
 ## What it does
 

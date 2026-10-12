@@ -87,6 +87,7 @@ Item {
   // escuchan sin contestar: los que hay que "tomar" con --force.
   readonly property var foreignServices: services.filter(function (s) { return s.type !== "docker" && s.up && !s.managed })
   readonly property var unresponsive: services.filter(function (s) { return s.health !== "" && s.up && !s.healthy })
+  readonly property var openSvc: services.filter(function (s) { return s.id === openService })[0]
   readonly property bool needsTakeover: foreignServices.length > 0 || unresponsive.length > 0
   readonly property string takeoverCommands: {
     var ids = []
@@ -369,7 +370,7 @@ Item {
       Row {
         anchors.horizontalCenter: parent.horizontalCenter
         spacing: 8
-        ActionButton { label: "Abrir"; icon: "󰖟"; enabled: root.openService !== "" && root.pending === ""; onTriggered: root.run("open") }
+        ActionButton { label: "Abrir"; icon: "󰖟"; enabled: root.openSvc !== undefined && root.openSvc.up && root.pending === ""; onTriggered: root.run("open") }
         ActionButton { label: "Logs"; icon: "󱆃"; enabled: root.openService !== ""; onTriggered: root.run("logs " + root.openService) }
       }
 
