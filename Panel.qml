@@ -3,44 +3,40 @@ import Quickshell
 import Quickshell.Io
 import qs.Ui
 
-// devstack — un icono en la barra para un stack de desarrollo local.
+// devstack — barra de Omarchy para stacks de desarrollo locales.
 //
-// Lee `devstack json` (ver bin/devstack en el repo omarchy-devstack) y muestra:
-//   · un chip de estado con 4 colores: gris apagado / rojo error / amarillo
-//     trabajando / verde arriba
-//   · un chip por servicio declarado en el JSON del proyecto
-//   · botones para levantar, bajar, abrir, reiniciar, ver logs y tomar el
-//     control de puertos que ocupen procesos ajenos
+// Un icono por proyecto (dos instancias con distinto `project` = dos proyectos),
+// con chip de estado de cuatro colores, un chip por servicio y botones para
+// levantar, bajar, abrir, ver logs, reiniciar y tomar el control de los puertos
+// que ocupen procesos ajenos.
 //
-// Varias instancias (una por proyecto) se configuran en el layout de la barra:
-//   { "id": "devstack", "type": "qml", "source": "~/.config/omarchy/bar/modules/devstack.qml",
-//     "project": "meperpos" }
-Item {
+// Todo el trabajo lo hace el CLI `devstack` (bin/devstack): este panel sólo lee
+// su salida JSON y le manda las acciones.
+Panel {
   id: root
-  property var bar
-  property string moduleName
-  property var settings
+  moduleName: "meperdonas.devstack"
+  ipcTarget: "meperdonas.devstack"
 
-  // Proyecto: por el layout de la barra, o el que devstack tenga por defecto.
-  readonly property string project: (settings && settings.project) ? String(settings.project) : ""
-  readonly property string projectArg: project ? " " + project : ""
+  // ------------------------------------------------------------ ajustes
+  readonly property string projectName: setting("project", "")
+  readonly property string projectArg: projectName ? " " + projectName : ""
+  readonly property string cli: setting("command", "devstack")
+  readonly property int refreshInterval: setting("refreshIntervalSec", 5)
+  readonly property int pendingTimeout: setting("pendingTimeoutSec", 300)
+  readonly property int stuckAfterPolls: setting("stuckAfterPolls", 6)
+  readonly property color colorOff: setting("colorOff", "#7A8394")
+  readonly property color colorError: setting("colorError", "#E05561")
+  readonly property color colorWorking: setting("colorWorking", "#E5B454")
+  readonly property color colorOk: setting("colorOk", "#7FBF7F")
 
+  // ------------------------------------------------------------ estado
   property bool loaded: false
   property string name: "devstack"
   property var services: []
   property string openService: ""
-  property bool popupOpen: false
-
   property string pending: ""
   property int pendingSeconds: 0
-  property int pendingTimeout: 300
   property int stuckPolls: 0
-  property int stuckAfterPolls: 6
-
-  readonly property color colorOff: "#7A8394"
-  readonly property color colorError: "#E05561"
-  readonly property color colorWorking: "#E5B454"
-  readonly property color colorOk: "#7FBF7F"
 
   readonly property bool starting: pending !== ""
   readonly property bool anyUp: services.some(function (s) { return s.up })
@@ -83,8 +79,8 @@ Item {
     return s.port > 0 ? (s.up ? colorOk : colorOff) : (s.managed ? colorOk : colorOff)
   }
 
-  // Servicios cuyo puerto tiene un proceso que no levantó devstack, o que
-  // escuchan sin contestar: los que hay que "tomar" con --force.
+  // Servicios con el puerto en manos de un proceso ajeno, o que escuchan sin
+  // contestar: son los que hay que "tomar" con --force.
   readonly property var foreignServices: services.filter(function (s) { return s.type !== "docker" && s.up && !s.managed })
   readonly property var unresponsive: services.filter(function (s) { return s.health !== "" && s.up && !s.healthy })
   readonly property var openSvc: services.filter(function (s) { return s.id === openService })[0]
@@ -107,28 +103,27 @@ Item {
   implicitWidth: 30
   implicitHeight: bar ? bar.barSize : 26
 
-  function helperPath() { return (settings && settings.command) ? String(settings.command) : "devstack" }
   function refresh() { if (!probe.running) probe.running = true }
-  function close() { root.popupOpen = false }
   function startPending(what) {
     root.pending = what
     root.pendingSeconds = 0
   }
   function runCommand(command) {
-    popupOpen = false
-    if (bar) bar.run(command)
+    // El popup se cierra: la barra queda visible y avisa por notificación.
+    close()
     refreshTimer.restart()
+    bar.run(command)
   }
   function run(argument) {
     if (argument === "down") startPending("down")
     else if (argument === "up" || argument.indexOf("restart") === 0) startPending("up")
     else startPending("")
-    runCommand(helperPath() + projectArg + " " + argument)
+    runCommand(cli + projectArg + " " + argument)
   }
 
   Process {
     id: probe
-    command: ["/bin/bash", "-lc", root.helperPath() + root.projectArg + " json"]
+    command: ["/bin/bash", "-lc", cli + projectArg + " json"]
     stdout: StdioCollector { id: probeOutput }
     onExited: {
       var data = null
@@ -168,7 +163,7 @@ Item {
 
   Timer {
     id: refreshTimer
-    interval: root.starting ? 2000 : 5000
+    interval: (root.starting ? 2 : root.refreshInterval) * 1000
     repeat: true
     running: true
     onTriggered: root.refresh()
@@ -204,7 +199,7 @@ Item {
       id: mouse
       anchors.fill: parent
       hoverEnabled: true
-      onClicked: root.popupOpen = !root.popupOpen
+      onClicked: root.toggle()
       onEntered: if (bar) bar.showTooltip(mouse, root.name + " · " + root.stateText)
       onExited: if (bar) bar.hideTooltip(mouse)
     }
@@ -215,7 +210,7 @@ Item {
     anchorItem: iconButton
     bar: root.bar
     owner: root
-    open: root.popupOpen
+    open: root.opened
     // "hover": sin HyprlandFocusGrab, así el popup sobrevive al clic-arrastre de
     // slurp cuando estás encuadrando un screenshot.
     triggerMode: "hover"
@@ -363,22 +358,22 @@ Item {
       Row {
         anchors.horizontalCenter: parent.horizontalCenter
         spacing: 8
-        ActionButton { label: "Levantar"; icon: "󰐊"; enabled: !root.allUp && root.pending === ""; onTriggered: root.run("up") }
-        ActionButton { label: "Bajar"; icon: "󰍃"; enabled: root.anyUp && root.pending === ""; onTriggered: root.run("down") }
+        ActionButton { label: "Levantar"; icon: "󰐊"; enabled: !root.allUp && !root.starting; onTriggered: root.run("up") }
+        ActionButton { label: "Bajar"; icon: "󰍃"; enabled: root.anyUp && !root.starting; onTriggered: root.run("down") }
       }
 
       Row {
         anchors.horizontalCenter: parent.horizontalCenter
         spacing: 8
-        ActionButton { label: "Abrir"; icon: "󰖟"; enabled: root.openSvc !== undefined && root.openSvc.up && root.pending === ""; onTriggered: root.run("open") }
+        ActionButton { label: "Abrir"; icon: "󰖟"; enabled: root.openSvc !== undefined && root.openSvc.up && !root.starting; onTriggered: root.run("open") }
         ActionButton { label: "Logs"; icon: "󱆃"; enabled: root.openService !== ""; onTriggered: root.run("logs " + root.openService) }
       }
 
       Row {
         anchors.horizontalCenter: parent.horizontalCenter
         spacing: 8
-        ActionButton { label: "Reiniciar"; icon: "󰜉"; enabled: root.anyUp && root.pending === ""; onTriggered: root.run("restart") }
-        ActionButton { label: "Menú"; icon: "󰒓"; enabled: true; onTriggered: root.runCommand("omarchy menu summon dev" + root.project) }
+        ActionButton { label: "Reiniciar"; icon: "󰜉"; enabled: root.anyUp && !root.starting; onTriggered: root.run("restart") }
+        ActionButton { label: "Menú"; icon: "󰒓"; enabled: true; onTriggered: root.runCommand("omarchy menu summon dev" + root.projectName) }
       }
 
       ActionButton {
@@ -387,7 +382,7 @@ Item {
         wide: true
         label: root.starting ? "Tomando el control…" : root.takeoverLabel
         icon: "󰒓"
-        enabled: root.pending === ""
+        enabled: !root.starting
         onTriggered: root.run("restart " + root.takeoverCommands + " --force")
       }
     }

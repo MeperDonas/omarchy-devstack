@@ -1,0 +1,100 @@
+{
+  "schemaVersion": 1,
+  "id": "meperdonas.devstack",
+  "name": "devstack",
+  "version": "1.1.0",
+  "author": "Santiago Villabona (MeperDonas)",
+  "license": "MIT",
+  "description": "One bar icon per local dev stack: lift, watch and drop docker services and dev servers, in order, with a four-colour state and a take-over button for ports held by stray processes.",
+  "kinds": ["bar-widget"],
+  "activation": "on-demand",
+  "entryPoints": {
+    "barWidget": "Panel.qml"
+  },
+  "barWidget": {
+    "displayName": "devstack",
+    "description": "Local dev stacks (docker + dev servers) with four-colour state and take-over of stray ports.",
+    "category": "Development",
+    "aliases": ["devstack", "dev-stack", "local stack", "dev servers"],
+    "allowMultiple": true,
+    "defaultSection": "right",
+    "defaults": {
+      "project": "",
+      "command": "devstack",
+      "refreshIntervalSec": 5,
+      "stuckAfterPolls": 6,
+      "pendingTimeoutSec": 300,
+      "colorOff": "#7A8394",
+      "colorError": "#E05561",
+      "colorWorking": "#E5B454",
+      "colorOk": "#7FBF7F"
+    },
+    "schema": [
+      {
+        "key": "project",
+        "type": "string",
+        "label": "Project",
+        "defaultValue": "",
+        "description": "devstack project name (a JSON file in ~/.config/devstack). Empty uses the default project."
+      },
+      {
+        "key": "command",
+        "type": "string",
+        "label": "devstack command",
+        "defaultValue": "devstack",
+        "description": "How to run the CLI, if it is not on PATH (for example ~/.local/bin/devstack)."
+      },
+      {
+        "key": "refreshIntervalSec",
+        "type": "integer",
+        "label": "Refresh interval (seconds)",
+        "min": 2,
+        "max": 60,
+        "step": 1,
+        "defaultValue": 5
+      },
+      {
+        "key": "stuckAfterPolls",
+        "type": "integer",
+        "label": "Polls before a service counts as stuck",
+        "min": 1,
+        "max": 60,
+        "step": 1,
+        "defaultValue": 6
+      },
+      {
+        "key": "pendingTimeoutSec",
+        "type": "integer",
+        "label": "Give up on an action after (seconds)",
+        "min": 30,
+        "max": 3600,
+        "step": 10,
+        "defaultValue": 300
+      },
+      {
+        "key": "colorOff",
+        "type": "string",
+        "label": "Colour · off",
+        "defaultValue": "#7A8394"
+      },
+      {
+        "key": "colorError",
+        "type": "string",
+        "label": "Colour · error",
+        "defaultValue": "#E05561"
+      },
+      {
+        "key": "colorWorking",
+        "type": "string",
+        "label": "Colour · working",
+        "defaultValue": "#E5B454"
+      },
+      {
+        "key": "colorOk",
+        "type": "string",
+        "label": "Colour · ok",
+        "defaultValue": "#7FBF7F"
+      }
+    ]
+  }
+}

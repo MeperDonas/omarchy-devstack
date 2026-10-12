@@ -1,16 +1,18 @@
 #!/usr/bin/env bash
 # install.sh — instala devstack en Omarchy:
-#   · bin/devstack         → ~/.local/bin/devstack
-#   · bar/modules/devstack.qml → ~/.config/omarchy/bar/modules/devstack.qml
-#   · entradas en ~/.config/omarchy/shell.json (una instancia por proyecto)
-#   · bloque en ~/.config/omarchy/extensions/omarchy-menu.jsonc  (--menu)
-#   · configs de ejemplo → ~/.config/devstack/                    (--config FILE)
+#   · el plugin de barra (meperdonas.devstack) en ~/.config/omarchy/plugins/
+#   · el CLI en ~/.local/bin/devstack
+#   · una entrada en la barra para el proyecto elegido
+#   · un bloque en ~/.config/omarchy/extensions/omarchy-menu.jsonc  (--menu)
+#   · configs de ejemplo en ~/.config/devstack/                     (--config)
 #
 # Uso:
-#   ./install.sh [--project NOMBRE] [--menu] [--config ARCHIVO] [--dry-run]
+#   ./install.sh [--project NOMBRE] [--config ARCHIVO] [--menu]
+#                [--section left|center|right] [--no-enable] [--dry-run]
 #
-# Idempotente: se puede correr las veces que quieras; reemplaza sus propias
-# entradas y nunca duplica. Siempre deja backup de los archivos que toca.
+# Idempotente: si el plugin ya está instalado lo actualiza (`omarchy plugin
+# update`), no duplica la entrada de la barra, nunca pisa un config existente y
+# deja backup de cada archivo que toca.
 
 set -euo pipefail
 
@@ -18,15 +20,18 @@ REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HOME_DIR="${HOME}"
 CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME_DIR/.config}"
 OMARCHY_DIR="$CONFIG_HOME/omarchy"
+PLUGINS_DIR="$OMARCHY_DIR/plugins"
 DEVDATA_DIR="$CONFIG_HOME/devstack"
 BIN_DIR="${PREFIX:-$HOME_DIR/.local}/bin"
-MODULES_DIR="$OMARCHY_DIR/bar/modules"
 SHELL_JSON="$OMARCHY_DIR/shell.json"
 MENU_JSONC="$OMARCHY_DIR/extensions/omarchy-menu.jsonc"
 STAMP="$(date +%Y%m%d-%H%M%S)"
 
+PLUGIN_ID="$(jq -r '.id' "$REPO/manifest.json" 2>/dev/null || echo "")"
 PROJECT=""
+SECTION="right"
 PATCH_MENU=0
+DO_ENABLE=1
 DRY=0
 CONFIGS=()
 block=""
@@ -34,8 +39,12 @@ block=""
 log() { printf '\033[1;34m[pos]\033[0m  %s\n' "$*"; }
 ok() { printf '\033[1;32m[ok]\033[0m   %s\n' "$*"; }
 warn() { printf '\033[1;33m[aviso]\033[0m %s\n' "$*" >&2; }
+die() {
+    printf '\033[1;31m[error]\033[0m %s\n' "$*" >&2
+    exit 1
+}
 
-usage() { sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'; }
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -43,13 +52,21 @@ while [[ $# -gt 0 ]]; do
             PROJECT="${2:-}"
             shift 2
             ;;
+        --config)
+            CONFIGS+=("${2:-}")
+            shift 2
+            ;;
         --menu)
             PATCH_MENU=1
             shift
             ;;
-        --config)
-            CONFIGS+=("${2:-}")
+        --section)
+            SECTION="${2:-right}"
             shift 2
+            ;;
+        --no-enable)
+            DO_ENABLE=0
+            shift
             ;;
         --dry-run)
             DRY=1
@@ -80,69 +97,93 @@ backup() {
     run cp -a "$1" "$1.bak.$STAMP"
 }
 
-command -v jq >/dev/null || {
-    warn "Falta jq (pacman -S jq)"
-    exit 1
-}
+command -v jq >/dev/null || die "Falta jq (pacman -S jq)"
+command -v omarchy >/dev/null || die "Este instalador es para Omarchy (falta el comando omarchy)"
+[[ -n $PLUGIN_ID ]] || die "No encuentro manifest.json con 'id' en $REPO"
+[[ -f $REPO/Panel.qml ]] || die "Falta Panel.qml (el entry point del plugin)"
+[[ $SECTION =~ ^(left|center|right)$ ]] || die "--section tiene que ser left, center o right"
 
-# ---------------------------------------------------------------- script + módulo
+# ---------------------------------------------------------------- plugin
 
-run mkdir -p "$BIN_DIR" "$MODULES_DIR" "$DEVDATA_DIR"
+if [[ -d $PLUGINS_DIR/$PLUGIN_ID ]]; then
+    log "El plugin ya está instalado: lo actualizo"
+    if ((DRY)); then
+        printf '  [dry-run] omarchy plugin update %s --yes\n' "$PLUGIN_ID"
+    else
+        omarchy plugin update "$PLUGIN_ID" --yes || warn "No pude actualizar el plugin; sigo con el que está"
+    fi
+else
+    log "Instalando el plugin de barra desde $REPO"
+    run omarchy plugin add "$REPO" --yes
+fi
+ok "plugin → $PLUGINS_DIR/$PLUGIN_ID"
+
+# ---------------------------------------------------------------- CLI
+
+run mkdir -p "$BIN_DIR" "$DEVDATA_DIR"
 run install -m 755 "$REPO/bin/devstack" "$BIN_DIR/devstack"
-ok "script → $BIN_DIR/devstack"
-
-MODULE_SRC="~/.config/omarchy/bar/modules/devstack.qml"
-run install -m 644 "$REPO/bar/modules/devstack.qml" "$MODULES_DIR/devstack.qml"
-ok "módulo de barra → $MODULES_DIR/devstack.qml"
+ok "CLI → $BIN_DIR/devstack"
 
 # ---------------------------------------------------------------- configs
 
-if [[ ${#CONFIGS[@]} -gt 0 ]]; then
-    for c in "${CONFIGS[@]}"; do
-        [[ -r $c ]] || {
-            warn "No puedo leer $c"
-            continue
-        }
-        run cp -n "$c" "$DEVDATA_DIR/$(basename "$c")" 2>/dev/null || run cp -a "$c" "$DEVDATA_DIR/$(basename "$c")"
-        ok "config → $DEVDATA_DIR/$(basename "$c")"
-    done
-fi
+for c in "${CONFIGS[@]:-}"; do
+    [[ -n $c ]] || continue
+    [[ -r $c ]] || {
+        warn "No puedo leer $c"
+        continue
+    }
+    target="$DEVDATA_DIR/$(basename "$c")"
+    if [[ -e $target ]]; then
+        log "Ya existe $target; lo dejo como está"
+    else
+        run cp -a "$c" "$target"
+        ok "config → $target"
+    fi
+done
 
-# Sin --project: si hay un único config, ese; si hay varios, no registro widget.
 if [[ -z $PROJECT ]]; then
     found=()
     for f in "$DEVDATA_DIR"/*.json; do
         [[ -r $f ]] && found+=("$(basename "$f" .json)")
     done
-    if [[ ${#found[@]} -eq 1 ]]; then
-        PROJECT="${found[0]}"
-    elif [[ ${#found[@]} -gt 1 ]]; then
-        warn "Hay varios proyectos (${found[*]}): corré de nuevo con --project NOMBRE para registrar el widget"
+    case ${#found[@]} in
+        1) PROJECT="${found[0]}" ;;
+        0) ;;
+        *) warn "Hay varios proyectos (${found[*]}): pasá --project NOMBRE para registrar el widget de uno" ;;
+    esac
+fi
+
+# ---------------------------------------------------------------- barra
+
+if ((DO_ENABLE)); then
+    log "Habilitando el widget en la barra (sección $SECTION)"
+    if ((DRY)); then
+        printf '  [dry-run] omarchy plugin enable %s --section %s\n' "$PLUGIN_ID" "$SECTION"
+    else
+        omarchy plugin enable "$PLUGIN_ID" --section "$SECTION" || warn "No pude habilitarlo; agregalo a mano en $SHELL_JSON"
     fi
 fi
 
-# ---------------------------------------------------------------- shell.json
-
-if [[ -n $PROJECT ]]; then
-    if [[ ! -f $SHELL_JSON ]]; then
-        warn "No encuentro $SHELL_JSON; registrá el widget a mano"
+# Ajustes por instancia (project) en la entrada de la barra: el plugin los lee
+# vía setting("project", ""). Sin --project se usa el proyecto por defecto del
+# CLI (el único configurado) y no hace falta tocar shell.json.
+if [[ -n $PROJECT && -f $SHELL_JSON ]] && command -v jq >/dev/null; then
+    if ((DRY)); then
+        printf '  [dry-run] jq: project=%s en la entrada %s\n' "$PROJECT" "$PLUGIN_ID"
     else
         backup "$SHELL_JSON"
         tmp=$(mktemp)
-        jq --arg src "$MODULE_SRC" --arg proj "$PROJECT" '
-          ({"id": "devstack", "type": "qml", "source": $src, "project": $proj}) as $entry
-          | .bar.layout.right = (
-              ((.bar.layout.right // []) | map(select((.id // "") != "devstack"))) as $r
-              | ($r | map(.type // "") | rindex("qml")) as $i
-              | if $i == null then ($r + [$entry]) else ($r[0:$i + 1] + [$entry] + $r[$i + 1:]) end
-            )
+        jq --arg id "$PLUGIN_ID" --arg proj "$PROJECT" '
+          .bar.layout |= with_entries(
+            .value |= map(if ((.id // "") | contains($id)) then . + {project: $proj} else . end)
+          )
         ' "$SHELL_JSON" >"$tmp"
         if jq -e . "$tmp" >/dev/null 2>&1; then
-            run mv "$tmp" "$SHELL_JSON"
-            ok "widget registrado en la barra (proyecto: $PROJECT)"
+            mv "$tmp" "$SHELL_JSON"
+            ok "widget configurado con project: $PROJECT"
         else
             rm -f "$tmp"
-            warn "El shell.json resultante no es válido; no lo toqué (backup en $SHELL_JSON.bak.$STAMP)"
+            warn "No pude ajustar el project en $SHELL_JSON; el widget usará el proyecto por defecto"
         fi
     fi
 fi
@@ -160,6 +201,7 @@ if ((PATCH_MENU)); then
         {
             printf '  // >>> devstack (generado por install.sh --menu)\n'
             for c in "${CONFIGS[@]}"; do
+                [[ -n $c ]] || continue
                 DEVDATA_CONFIG="$DEVDATA_DIR" "$REPO/bin/devstack" "$(basename "$c" .json)" menu
             done
             printf '  // <<< devstack\n'
@@ -202,4 +244,4 @@ fi
 
 printf '\n'
 ok "Listo. Recargá el shell con: omarchy restart shell"
-printf '  %s\n' "probá: devstack list" "       devstack ${PROJECT:-<proyecto>} status"
+printf '  %s\n' "probá: devstack list" "       devstack ${PROJECT:-<proyecto>} status" "       omarchy plugin list"
