@@ -19,7 +19,6 @@ Panel {
 
   // ------------------------------------------------------------ ajustes
   readonly property string projectName: setting("project", "")
-  readonly property string projectArg: projectName ? " " + projectName : ""
   readonly property string cli: setting("command", "devstack")
   readonly property int refreshInterval: setting("refreshIntervalSec", 5)
   readonly property int pendingTimeout: setting("pendingTimeoutSec", 300)
@@ -189,8 +188,8 @@ Panel {
     Text {
       id: barGlyph
       anchors.centerIn: parent
-      text: "󰒋"
-      color: root.stateColor
+      text: "M"
+      color: "#ff0000"
       font.family: bar ? bar.fontFamily : "monospace"
       font.pixelSize: 16
       opacity: root.stateKind === "off" ? 0.72 : 1
