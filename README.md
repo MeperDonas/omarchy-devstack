@@ -1,13 +1,22 @@
 # devstack — local dev stacks for the Omarchy bar
 
-One icon in the Omarchy bar (plus a menu section and a CLI) to lift, watch and
+[![CI](https://github.com/MeperDonas/omarchy-devstack/actions/workflows/ci.yml/badge.svg)](https://github.com/MeperDonas/omarchy-devstack/actions/workflows/ci.yml)
+
+One bar icon in the Omarchy bar (plus a menu section and a CLI) to lift, watch and
 drop the local stack of a project: docker services, dev servers, health checks
 and the browser, in order.
 
-Built for [Omarchy](https://omarchy.org/) (Hyprland + Quickshell). Nothing is
-hardcoded to one project: you declare each stack in a JSON file.
+It ships as an **Omarchy plugin** (`bar-widget`), so it installs with
+`omarchy plugin add`, updates with `omarchy plugin update` and is configured from
+the Omarchy settings UI. Nothing is hardcoded to one project: you declare each
+stack in a JSON file.
 
 ![The devstack popup on the Omarchy bar](docs/screenshot.png)
+
+While an action runs the icon breathes and the panel shows the dots plus a slow
+progress line, so you can see it is working instead of guessing:
+
+![The working animation](docs/working.gif)
 
 The icon is grey when the stack is off, red on error, yellow while lifting and
 green when every service answers.
@@ -39,37 +48,45 @@ green when every service answers.
 
 ## Requirements
 
-- Omarchy (the bar widget uses the Quickshell bar API). The CLI also works on
-  plain Hyprland/Arch, minus the bar module.
-- `jq`, `curl`, `ss` (iproute2) — `docker` only if you declare docker services.
+- Omarchy with plugin support (the bar widget is a `bar-widget` plugin). The CLI
+  alone also runs on plain Arch/Hyprland: bash, `jq`, `curl`, `ss` (iproute2).
+- `docker` only if you declare docker services.
 - For docker without the `docker` group: `polkit` (the Omarchy dialog asks for
   the password) and/or `sudo`.
 
 ## Install
 
 ```bash
-git clone https://github.com/<you>/omarchy-devstack.git
+git clone https://github.com/MeperDonas/omarchy-devstack.git
 cd omarchy-devstack
 
-# script + bar module + config + bar entry + menu section
+# plugin + CLI + config + bar entry + Omarchy menu section, in one go
 ./install.sh --project myproject --config config/example.json --menu
-
 omarchy restart shell
 ```
 
-`install.sh` is idempotent, only replaces its own entries, and backs up every
-file it edits (`~/.config/omarchy/shell.json.bak.<stamp>` and the same for the
-menu). Flags:
+Or do it by hand:
 
-| Flag | What it does |
-|---|---|
-| `--project NAME` | registers the bar widget for that project |
-| `--config FILE` | copies a config into `~/.config/devstack/` |
-| `--menu` | appends/refreshes the Dev section of the Omarchy menu |
-| `--dry-run` | prints what it would do |
+```bash
+omarchy plugin add https://github.com/MeperDonas/omarchy-devstack --enable
+install -m755 bin/devstack ~/.local/bin/devstack
+mkdir -p ~/.config/devstack && cp config/example.json ~/.config/devstack/myproject.json
+```
 
-To uninstall: `./uninstall.sh` (removes the script, the module, its bar entry,
-its menu block and its configs; keeps your docker volumes).
+`install.sh` is idempotent, updates the plugin when it is already installed, never
+overwrites an existing config, and leaves a backup of every file it edits.
+Flags: `--project NAME`, `--config FILE` (repeatable), `--menu`,
+`--section left|center|right`, `--no-enable`, `--dry-run`.
+
+Uninstall with `./uninstall.sh` (add `--keep-config` to keep your stacks).
+
+## Try it in one minute (no docker, no node)
+
+```bash
+DEVDATA_CONFIG="$PWD/config" DEVDATA_PROJECT=demo bin/devstack demo up
+```
+
+`config/demo.json` is a single `python3 -m http.server` on `:8080`.
 
 ## Configure a stack
 
@@ -135,21 +152,24 @@ devstack <p> --running | --up | --foreign   # guards for the menu
 
 ## Several projects on the bar
 
-One widget instance per project, each with its own `project` key:
+`allowMultiple` is on, so you can run one widget instance per project. Add the
+widget again from the Omarchy settings UI (or `omarchy plugin enable
+meperdonas.devstack --section right`) and give each instance its `project` in
+`~/.config/omarchy/shell.json`:
 
 ```json
-{ "id": "devstack", "type": "qml",
-  "source": "~/.config/omarchy/bar/modules/devstack.qml", "project": "meperpos" }
+{ "id": "meperdonas.devstack", "project": "meperpos" },
+{ "id": "meperdonas.devstack", "project": "other-app" }
 ```
 
-Add a second one with a different `id` and `project`, then
-`omarchy restart shell`.
+The widget also reads the project the CLI resolved, so a single instance with no
+`project` set follows whichever project is the default.
 
 ## How it is wired
 
 ```mermaid
 graph LR
-  W["bar: devstack.qml<br/>(poll 5 s)"] -- "devstack json" --> S["~/.local/bin/devstack"]
+  W["bar plugin<br/>meperdonas.devstack<br/>(poll 5 s)"] -- "devstack json" --> S["~/.local/bin/devstack"]
   M["Omarchy menu<br/>(dev.* rows)"] -- "bash -lc" --> S
   T["terminal"] --> S
   S --> PG[("docker compose")]
@@ -181,10 +201,16 @@ desarrollo, health checks y el navegador, en orden.
 **Instalar.**
 
 ```bash
-git clone https://github.com/<vos>/omarchy-devstack.git && cd omarchy-devstack
+git clone https://github.com/MeperDonas/omarchy-devstack.git && cd omarchy-devstack
 ./install.sh --project miproyecto --config config/example.json --menu
 omarchy restart shell
 ```
+
+Es un **plugin de Omarchy** (`bar-widget`): se instala con `omarchy plugin add`,
+se actualiza con `omarchy plugin update` y se configura desde los ajustes de
+Omarchy. Para probarlo sin docker ni node: `DEVDATA_CONFIG="$PWD/config"
+DEVDATA_PROJECT=demo bin/devstack demo up` (levanta un `python3 -m http.server`).
+Desinstalar: `./uninstall.sh`.
 
 **Configurar.** Un JSON por proyecto en `~/.config/devstack/<nombre>.json`
 (nombre, directorio y `services` con `id`, `label`, `type` (`process`/`docker`),

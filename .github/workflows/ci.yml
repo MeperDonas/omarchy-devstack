@@ -1,0 +1,86 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install tools
+        run: sudo apt-get update && sudo apt-get install -y jq shellcheck python3
+
+      - name: ShellCheck
+        run: shellcheck --severity=warning bin/devstack install.sh uninstall.sh
+
+      - name: bash syntax
+        run: |
+          for f in bin/devstack install.sh uninstall.sh; do bash -n "$f"; done
+
+      - name: Manifest is a valid plugin manifest
+        run: |
+          jq -e '.schemaVersion == 1' manifest.json >/dev/null
+          jq -e '.kinds == ["bar-widget"]' manifest.json >/dev/null
+          jq -e '.entryPoints.barWidget' manifest.json >/dev/null
+          jq -e '.barWidget.schema | length > 0' manifest.json >/dev/null
+          entry=$(jq -r '.entryPoints.barWidget' manifest.json)
+          test -f "$entry" || { echo "missing entry point: $entry"; exit 1; }
+          # every schema default must exist under defaults so the widget can read it
+          for key in $(jq -r '.barWidget.schema[].key' manifest.json); do
+            jq -e --arg k "$key" '.barWidget.defaults | has($k)' manifest.json >/dev/null \
+              || { echo "schema key without default: $key"; exit 1; }
+          done
+
+      - name: Config files are valid JSON
+        run: for f in config/*.json; do jq -e . "$f" >/dev/null || exit 1; done
+
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install tools
+        run: sudo apt-get update && sudo apt-get install -y jq python3
+
+      - name: CLI lifts, reports and drops a real stack
+        run: |
+          set -euo pipefail
+          export DEVDATA_CONFIG="$PWD/config"
+          export DEVDATA_PROJECT=demo
+          bin/devstack demo up
+          bin/devstack demo --up
+          bin/devstack demo --running
+          bin/devstack json | jq -e '.project == "demo" and (.services | length == 1) and .services[0].id == "web"'
+          bin/devstack status
+          bin/devstack list
+          bin/devstack down
+          if bin/devstack demo --up; then
+            echo "the port should be closed after down"; exit 1
+          fi
+
+      - name: Bare command without a project uses the default
+        run: |
+          set -euo pipefail
+          export DEVDATA_CONFIG="$PWD/config"
+          export DEVDATA_PROJECT=demo
+          bin/devstack json | jq -e '.project == "demo"'
+          bin/devstack list >/dev/null
+
+      - name: Menu block is valid JSONC
+        run: |
+          set -euo pipefail
+          export DEVDATA_CONFIG="$PWD/config"
+          { echo "{"; bin/devstack demo menu; echo "}"; } > /tmp/menu.jsonc
+          python3 - <<'PY'
+import json, re, pathlib
+raw = pathlib.Path("/tmp/menu.jsonc").read_text()
+stripped = re.sub(r",(\s*[}\]])", r"\1", re.sub(r"^\s*//[^\n]*(\n|$)", "", raw, flags=re.M))
+data = json.loads(stripped)
+assert "dev.demo.up" in data, data.keys()
+assert "omarchy-launch-terminal" in data["dev.demo.up"]["action"]
+print("menu block ok:", len(data), "rows")
+PY
