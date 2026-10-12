@@ -32,11 +32,18 @@ Panel {
   // ------------------------------------------------------------ estado
   property bool loaded: false
   property string name: "devstack"
+  // El CLI devuelve el proyecto que resolvió (`devstack json` sin proyecto usa
+  // el default): así las acciones siguientes y el botón Menú apuntan bien aunque
+  // la entrada de la barra no traiga `project`.
+  property string resolvedProject: ""
   property var services: []
   property string openService: ""
   property string pending: ""
   property int pendingSeconds: 0
   property int stuckPolls: 0
+
+  readonly property string effectiveProject: projectName !== "" ? projectName : resolvedProject
+  readonly property string projectArg: effectiveProject !== "" ? " " + effectiveProject : ""
 
   readonly property bool starting: pending !== ""
   readonly property bool anyUp: services.some(function (s) { return s.up })
@@ -138,6 +145,7 @@ Panel {
       }
       root.loaded = true
       root.name = data.name || "devstack"
+      root.resolvedProject = data.project || ""
       root.services = data.services || []
       root.openService = data.open || ""
       var unhealthy = root.services.some(function (s) { return s.health !== "" && s.up && !s.healthy })
@@ -373,7 +381,7 @@ Panel {
         anchors.horizontalCenter: parent.horizontalCenter
         spacing: 8
         ActionButton { label: "Reiniciar"; icon: "󰜉"; enabled: root.anyUp && !root.starting; onTriggered: root.run("restart") }
-        ActionButton { label: "Menú"; icon: "󰒓"; enabled: true; onTriggered: root.runCommand("omarchy menu summon dev" + root.projectName) }
+        ActionButton { label: "Menú"; icon: "󰒓"; enabled: true; onTriggered: root.runCommand("omarchy menu summon dev" + root.effectiveProject) }
       }
 
       ActionButton {
