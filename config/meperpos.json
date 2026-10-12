@@ -1,0 +1,41 @@
+{
+  "name": "MeperPOS",
+  "dir": "~/Projects/MeperPOS",
+  "services": [
+    {
+      "id": "db",
+      "label": "postgres",
+      "type": "docker",
+      "compose": "backend/docker-compose.yml",
+      "container": "postgres-db",
+      "port": 5432,
+      "wait": 60
+    },
+    {
+      "id": "api",
+      "label": "backend",
+      "dir": "backend",
+      "cmd": "npm run start:dev",
+      "port": 3001,
+      "url": "http://localhost:3001",
+      "health": "http://localhost:3001/api/health",
+      "wait": 180
+    },
+    {
+      "id": "web",
+      "label": "frontend",
+      "dir": "frontend",
+      "cmd": "npm run dev",
+      "port": 3000,
+      "url": "http://localhost:3000",
+      "health": "http://localhost:3000",
+      "wait": 120,
+      "open": true
+    }
+  ],
+  "tasks": [
+    { "id": "seed", "label": "Datos de prueba (seed)", "dir": "backend", "cmd": "npm run seed", "needs": ["db"] },
+    { "id": "migrate", "label": "Migraciones (prisma migrate dev)", "dir": "backend", "cmd": "npm run migrate:dev", "needs": ["db"] },
+    { "id": "studio", "label": "Prisma Studio", "dir": "backend", "cmd": "npm run studio", "needs": ["db"] }
+  ]
+}

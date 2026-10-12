@@ -1,0 +1,38 @@
+{
+  "name": "My app",
+  "dir": "~/Projects/my-app",
+  "services": [
+    {
+      "id": "db",
+      "label": "postgres",
+      "type": "docker",
+      "compose": "docker-compose.yml",
+      "container": "postgres-db",
+      "port": 5432,
+      "wait": 60
+    },
+    {
+      "id": "api",
+      "label": "backend",
+      "dir": "backend",
+      "cmd": "npm run start:dev",
+      "port": 3001,
+      "health": "http://localhost:3001/api/health",
+      "wait": 180
+    },
+    {
+      "id": "web",
+      "label": "frontend",
+      "dir": "frontend",
+      "cmd": "npm run dev",
+      "port": 3000,
+      "health": "http://localhost:3000",
+      "wait": 120,
+      "open": true
+    }
+  ],
+  "tasks": [
+    { "id": "seed", "label": "Seed data", "dir": "backend", "cmd": "npm run seed", "needs": ["db"] },
+    { "id": "migrate", "label": "Migrations", "dir": "backend", "cmd": "npm run migrate", "needs": ["db"] }
+  ]
+}

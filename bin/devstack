@@ -1,0 +1,777 @@
+#!/usr/bin/env bash
+# devstack — levanta, mira y baja stacks de desarrollo locales con un solo comando.
+#
+# Cada proyecto se declara en un JSON (~/.config/devstack/<proyecto>.json):
+# servicios docker o de proceso, puerto, health-check, tareas extra. El script
+# orquesta docker, los servidores de desarrollo y el navegador; los servicios
+# viven en un pidfile propio para que `down` no deje nada huérfano y para no
+# tocar nunca un proceso que hayas levantado tú a mano.
+#
+# Uso:
+#   devstack                          lista los proyectos configurados
+#   devstack <p> [up]                 levanta todo y abre el navegador
+#                                     --force pisa lo ajeno que ocupe los puertos
+#   devstack <p> down                 baja los procesos y los servicios docker
+#                                     --keep-docker lo deja, --force mata lo ajeno
+#   devstack <p> restart [id...]      reinicia (todos o los ids dados)
+#   devstack <p> status               estado por servicio
+#   devstack <p> json                 estado como JSON (lo consume el widget de la barra)
+#   devstack <p> logs [id]            sigue los logs (o los últimos de todos)
+#   devstack <p> open [id]            abre la URL del servicio (o la principal)
+#   devstack <p> up <id...>           levanta sólo esos servicios (con dependencias)
+#   devstack <p> task <id>            corre una tarea declarada (seed, migrate, …)
+#   devstack <p> list                 servicios y tareas declarados
+#   devstack <p> menu                 imprime el bloque JSONC para el menú de Omarchy
+#   devstack <p> --running            exit 0 si todos los servicios con health responden
+#   devstack <p> --up                 exit 0 si todo escucha
+#   devstack <p> --foreign            exit 0 si algún puerto lo tiene un proceso ajeno
+#
+# Overrides: DEVDATA_CONFIG (dir de configs) DEVDATA_PROJECT (proyecto por defecto)
+#            DEVDATA_WAIT_SCALE (multiplica las esperas)
+
+set -euo pipefail
+
+CONFIG_DIR="${DEVDATA_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/devstack}"
+RUNTIME_BASE="${XDG_RUNTIME_DIR:-/tmp}/devstack"
+DEFAULT_PROJECT="${DEVDATA_PROJECT:-}"
+WAIT_SCALE="${DEVDATA_WAIT_SCALE:-1}"
+CURRENT=""
+CONFIG_FILE=""
+
+# ---------------------------------------------------------------- salida
+
+log()  { printf '\033[1;34m[pos]\033[0m  %s\n' "$*"; }
+ok()   { printf '\033[1;32m[ok]\033[0m   %s\n' "$*"; }
+warn() { printf '\033[1;33m[aviso]\033[0m %s\n' "$*" >&2; }
+die()  { printf '\033[1;31m[error]\033[0m %s\n' "$*" >&2; notify "Error: $*"; exit 1; }
+
+notify() {
+    command -v notify-send >/dev/null 2>&1 && notify-send "${DEVDATA_NAME:-devstack}" "$1" >/dev/null 2>&1 || true
+}
+
+# ---------------------------------------------------------------- sondas
+
+port_open() { ss -ltnH "sport = :$1" 2>/dev/null | grep -q .; }
+
+# PID dueño de un puerto (visible si el proceso es del mismo usuario). Siempre
+# termina en 0: un grep sin match no debe tumbar el script (set -e).
+port_owner() {
+    ss -ltnpH "sport = :$1" 2>/dev/null | grep -oE 'pid=[0-9]+' | head -1 | cut -d= -f2 || true
+}
+
+http_code() { curl -sS -o /dev/null -m "${2:-2}" -w '%{http_code}' "$1" 2>/dev/null || printf '000'; }
+http_ok() { [[ "$(http_code "$1" "${2:-2}")" =~ ^[23] ]]; }
+
+pid_of_file() {
+    local f=$1 pid
+    [[ -r $f ]] || return 1
+    pid=$(<"$f")
+    [[ $pid =~ ^[0-9]+$ ]] || return 1
+    kill -0 "$pid" 2>/dev/null || return 1
+    printf '%s' "$pid"
+}
+
+# ---------------------------------------------------------------- config
+
+list_projects() {
+    local f
+    for f in "$CONFIG_DIR"/*.json; do
+        [[ -r $f ]] || continue
+        basename "$f" .json
+    done
+}
+
+resolve_project() {
+    local want="${1:-$DEFAULT_PROJECT}" all=()
+    if [[ -z $want ]]; then
+        while IFS= read -r p; do [[ -n $p ]] && all+=("$p"); done < <(list_projects)
+        case ${#all[@]} in
+            0) die "No hay proyectos en $CONFIG_DIR" ;;
+            1) want="${all[0]}" ;;
+            *)
+                if [[ -r $CONFIG_DIR/default ]]; then
+                    want=$(<"$CONFIG_DIR/default")
+                else
+                    die "Hay varios proyectos (${all[*]}): pasá el nombre o guardá el default en $CONFIG_DIR/default"
+                fi
+                ;;
+        esac
+    fi
+    [[ -r "$CONFIG_DIR/$want.json" ]] || die "No existe el proyecto '$want' ($CONFIG_DIR/$want.json)"
+    printf '%s' "$want"
+}
+
+load_project() {
+    CURRENT=$(resolve_project "${1:-}")
+    CONFIG_FILE="$CONFIG_DIR/$CURRENT.json"
+    command -v jq >/dev/null || die "Falta jq (pacman -S jq)"
+    DEVDATA_NAME=$(jq -r '.name // env.DEVDATA_NAME // "devstack"' "$CONFIG_FILE")
+    DIR=$(jq -r '.dir // "."' "$CONFIG_FILE")
+    DIR="${DIR/#\~/$HOME}"
+    RUNTIME_DIR="$RUNTIME_BASE/$CURRENT"
+    [[ -d $DIR ]] || warn "El directorio del proyecto no existe: $DIR"
+}
+
+# Lee un campo de un servicio: svc_field <id> <campo>
+svc_field() {
+    jq -r --arg id "$1" --arg k "$2" '.services[] | select(.id == $id) | .[$k] // empty' "$CONFIG_FILE"
+}
+svc_ids() { jq -r '.services[].id' "$CONFIG_FILE"; }
+svc_index() { jq -r --arg id "$1" '.services | to_entries[] | select(.value.id == $id) | .key' "$CONFIG_FILE"; }
+
+svc_label() { local l; l=$(svc_field "$1" label); printf '%s' "${l:-$1}"; }
+svc_port() { svc_field "$1" port; }
+svc_type() { local t; t=$(svc_field "$1" type); printf '%s' "${t:-process}"; }
+svc_pidfile() { printf '%s/%s.pid' "$RUNTIME_DIR" "$1"; }
+svc_logfile() { printf '%s/%s.log' "$RUNTIME_DIR" "$1"; }
+
+# Ruta absoluta de un campo de directorio del servicio, relativa al proyecto.
+svc_dir() {
+    local id=$1 d
+    d=$(svc_field "$id" dir)
+    if [[ -z $d ]]; then
+        printf '%s' "$DIR"
+    elif [[ $d == /* ]]; then
+        printf '%s' "$d"
+    else
+        printf '%s/%s' "$DIR" "$d"
+    fi
+}
+
+docker_needed() {
+    local id
+    for id in $(svc_ids); do
+        [[ $(svc_type "$id") == docker ]] && return 0
+    done
+    return 1
+}
+
+# ---------------------------------------------------------------- docker
+
+DOCKER=()
+docker_resolved=""
+resolve_docker() {
+    [[ -n $docker_resolved ]] && return 0
+    command -v docker >/dev/null || die "Docker no está instalado"
+    if command -v omarchy-sudo-docker >/dev/null 2>&1 && omarchy-sudo-docker 2>/dev/null; then
+        # Sin grupo docker el socket es root: con terminal pide la contraseña
+        # sudo; sin terminal (barra/menú) usa el diálogo de polkit de Omarchy.
+        if [[ -t 0 ]]; then
+            command -v sudo >/dev/null || die "Falta sudo"
+            DOCKER=(sudo docker)
+        else
+            command -v pkexec >/dev/null || die "Falta pkexec (paquete polkit)"
+            DOCKER=(pkexec docker)
+        fi
+    else
+        DOCKER=(docker)
+    fi
+    docker_resolved=1
+}
+
+dockerq() { resolve_docker; "${DOCKER[@]}" "$@"; }
+
+# Lectura de estado sin elevar: ni status ni la barra deben abrir un diálogo.
+docker_quiet() {
+    if command -v omarchy-sudo-docker >/dev/null 2>&1 && omarchy-sudo-docker 2>/dev/null; then
+        if sudo -n true 2>/dev/null; then sudo docker "$@"; else return 1; fi
+    else
+        docker "$@"
+    fi
+}
+
+compose_up() {
+    local id=$1 file
+    file=$(svc_field "$id" compose)
+    [[ -n $file ]] || die "El servicio docker '$id' necesita 'compose'"
+    [[ $file == /* ]] || file="$DIR/$file"
+    resolve_docker
+    ( cd "$DIR" && "${DOCKER[@]}" compose -f "$file" up -d )
+}
+
+compose_down() {
+    local id=$1 file
+    file=$(svc_field "$id" compose)
+    [[ $file == /* ]] || file="$DIR/$file"
+    resolve_docker
+    ( cd "$DIR" && "${DOCKER[@]}" compose -f "$file" down )
+}
+
+container_status() {
+    local id=$1 name
+    name=$(svc_field "$id" container)
+    [[ -n $name ]] || return 0
+    docker_quiet ps -a --filter "name=^/${name}\$" --format '{{.Status}}' 2>/dev/null | head -1 || true
+}
+
+# ---------------------------------------------------------------- esperas
+
+scaled() { printf '%s' "$(( $1 * WAIT_SCALE ))"; }
+
+wait_for_port() {
+    local port=$1 timeout=$2 label=$3 i=0
+    port_open "$port" && { ok "$label ya escuchaba en :$port"; return 0; }
+    log "Esperando $label en :$port (hasta ${timeout}s)..."
+    while ((i < timeout)); do
+        if port_open "$port"; then
+            ok "$label escuchando en :$port"
+            return 0
+        fi
+        sleep 1
+        i=$((i + 1))
+    done
+    return 1
+}
+
+wait_for_http() {
+    local url=$1 timeout=$2 label=$3 i=0
+    log "Esperando $label ($url) hasta ${timeout}s..."
+    while ((i < timeout)); do
+        if http_ok "$url"; then
+            ok "$label responde"
+            return 0
+        fi
+        sleep 1
+        i=$((i + 1))
+    done
+    return 1
+}
+
+wait_port_closed() {
+    local port=$1 i=0
+    while ((i < 15)); do
+        port_open "$port" || return 0
+        sleep 0.5
+        i=$((i + 1))
+    done
+    return 1
+}
+
+tail_log() {
+    [[ -s $1 ]] || return 0
+    printf '\033[1;33m--- últimas líneas de %s ---\033[0m\n' "$1" >&2
+    tail -n 25 "$1" >&2
+}
+
+# ---------------------------------------------------------------- procesos
+
+start_process() {
+    local id=$1 label=$2 dir=$3
+    shift 3
+    mkdir -p "$RUNTIME_DIR"
+    chmod 700 "$RUNTIME_DIR"
+    local logfile pidfile
+    logfile=$(svc_logfile "$id")
+    pidfile=$(svc_pidfile "$id")
+    : >"$logfile"
+    rm -f "$pidfile"
+    # setsid: el servicio queda en su propia sesión (pgid == pid) para poder
+    # matar el árbol entero de npm en `down`.
+    ( cd "$dir" || exit 1; setsid nohup "$@" >>"$logfile" 2>&1 & echo $! >"$pidfile" )
+    sleep 0.5
+    pid_of_file "$pidfile" >/dev/null || {
+        tail_log "$logfile"
+        die "$label no arrancó"
+    }
+    log "$label iniciado (pid $(<"$pidfile")) → $logfile"
+}
+
+stop_process() {
+    local id=$1 label=$2 port=$3 pid i=0
+    if ! pid=$(pid_of_file "$(svc_pidfile "$id")"); then
+        rm -f "$(svc_pidfile "$id")"
+        if [[ -n $port ]] && port_open "$port"; then
+            warn "$label escucha en :$port pero lo levantó otra cosa (una terminal tuya); no lo toco"
+        else
+            log "$label ya estaba detenido"
+        fi
+        return 0
+    fi
+    log "Deteniendo $label (pgid $pid)..."
+    kill -TERM "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null || true
+    while ((i < 20)) && kill -0 "$pid" 2>/dev/null; do
+        sleep 0.5
+        i=$((i + 1))
+    done
+    if kill -0 "$pid" 2>/dev/null; then
+        kill -KILL "-$pid" 2>/dev/null || kill -KILL "$pid" 2>/dev/null || true
+    fi
+    rm -f "$(svc_pidfile "$id")"
+    [[ -n $port ]] && { wait_port_closed "$port" || warn "$label sigue escuchando en :$port"; }
+    ok "$label detenido"
+}
+
+managed_process() { pid_of_file "$(svc_pidfile "$1")" >/dev/null; }
+
+# Mata el proceso ajeno que tiene el puerto (sólo con --force). Lee el grupo
+# ANTES de matar: después ps ya no lo encuentra y con set -e eso terminaba el
+# script en silencio.
+force_free_port() {
+    local port=$1 label=$2 pid pgid own_pgid can_group=1 i=0
+    [[ -n $port ]] || return 0
+    port_open "$port" || return 0
+    pid=$(port_owner "$port")
+    if [[ -z $pid ]]; then
+        warn "$label: :$port está ocupado por otro usuario; no puedo liberarlo"
+        return 1
+    fi
+    pgid=$(ps -o pgid= -p "$pid" 2>/dev/null | tr -d ' ' || true)
+    own_pgid=$(ps -o pgid= -p $$ 2>/dev/null | tr -d ' ' || true)
+    [[ $pgid =~ ^[0-9]+$ && $pgid != "$own_pgid" && $pgid != "$$" ]] || can_group=0
+
+    log "Matando el $label ajeno (pid $pid) que tiene :$port..."
+    kill -TERM "$pid" 2>/dev/null || true
+    while ((i < 10)) && port_open "$port"; do
+        sleep 0.5
+        i=$((i + 1))
+    done
+
+    if port_open "$port" && ((can_group)); then
+        log "Sigue ocupado: mando TERM al grupo $pgid"
+        kill -TERM "-$pgid" 2>/dev/null || true
+        i=0
+        while ((i < 6)) && port_open "$port"; do
+            sleep 0.5
+            i=$((i + 1))
+        done
+    fi
+
+    if port_open "$port"; then
+        kill -KILL "$pid" 2>/dev/null || true
+        ((can_group)) && kill -KILL "-$pgid" 2>/dev/null || true
+        sleep 0.5
+    fi
+
+    if port_open "$port"; then
+        warn "$label: :$port sigue ocupado"
+        return 1
+    fi
+    ok "$label: :$port liberado"
+}
+
+# ---------------------------------------------------------------- servicios
+
+svc_up() {
+    local id=$1 label port type
+    label=$(svc_label "$id")
+    port=$(svc_port "$id")
+    type=$(svc_type "$id")
+
+    if [[ -n $port ]] && port_open "$port"; then
+        if [[ $type == docker ]]; then
+            local st
+            st=$(container_status "$id")
+            ok "$label ya escucha en :$port${st:+ (contenedor: $st)}"
+        elif managed_process "$id"; then
+            ok "$label ya corriendo (lo levantó este script)"
+        else
+            ok "$label ya escucha en :$port (ajeno${owner:+, pid $(port_owner "$port")}); no lo toco"
+        fi
+        return 0
+    fi
+
+    if [[ $type == docker ]]; then
+        log "Levantando $label (docker compose)..."
+        compose_up "$id" || die "docker compose up falló para $label"
+        wait_for_port "$port" "$(scaled "$(svc_field "$id" wait || echo 60)")" "$label" || {
+            compose_logs "$id" | tail -25 >&2 || true
+            die "$label no abrió :$port"
+        }
+        notify "$label listo (:$port)"
+        return 0
+    fi
+
+    local dir wait cmd
+    dir=$(svc_dir "$id")
+    wait=$(svc_field "$id" wait)
+    cmd=$(svc_field "$id" cmd)
+    [[ -n $cmd ]] || die "El servicio '$id' necesita 'cmd'"
+    [[ -d $dir ]] || die "No existe el directorio de $label: $dir"
+    log "Iniciando $label ($cmd)..."
+    notify "Compilando $label…"
+    # shellcheck disable=SC2086
+    start_process "$id" "$label" "$dir" $cmd
+    if [[ -n $port ]]; then
+        wait_for_port "$port" "$(scaled "${wait:-120}")" "$label" || {
+            tail_log "$(svc_logfile "$id")"
+            die "$label no abrió :$port"
+        }
+    fi
+    local health
+    health=$(svc_field "$id" health)
+    if [[ -n $health ]]; then
+        wait_for_http "$health" "$(scaled "${wait:-120}")" "$label" || {
+            tail_log "$(svc_logfile "$id")"
+            die "$label no llegó a responder en ${wait}s"
+        }
+        notify "$label respondiendo (:$port)"
+    else
+        notify "$label escuchando (:$port)"
+    fi
+}
+
+compose_logs() {
+    local id=$1 file
+    file=$(svc_field "$id" compose)
+    [[ $file == /* ]] || file="$DIR/$file"
+    resolve_docker
+    ( cd "$DIR" && "${DOCKER[@]}" compose -f "$file" logs )
+}
+
+svc_down() {
+    local id=$1 label port type
+    label=$(svc_label "$id")
+    port=$(svc_port "$id")
+    type=$(svc_type "$id")
+    if [[ $type == docker ]]; then
+        compose_down "$id" || die "docker compose down falló para $label"
+        ok "$label detenido"
+    else
+        stop_process "$id" "$label" "$port"
+    fi
+}
+
+# Servicios declarados, en orden de arranque.
+all_ids() { svc_ids; }
+
+up() {
+    local force="" arg
+    for arg in "$@"; do [[ $arg == --force ]] && force=1; done
+    local started elapsed=/dev/null id
+    started=$(date +%s)
+    if [[ -n $force ]]; then
+        for id in $(svc_ids); do
+            { managed_process "$id" || force_free_port "$(svc_port "$id")" "$(svc_label "$id")"; } || true
+        done
+    fi
+    for id in $(svc_ids); do
+        svc_up "$id"
+    done
+    print_urls
+    elapsed=$(( $(date +%s) - started ))
+    if report_ready "$elapsed"; then
+        open_url "$(open_service)"
+    fi
+}
+
+down() {
+    local keep="" force="" arg
+    for arg in "$@"; do
+        case $arg in
+            --keep-docker) keep=1 ;;
+            --force) force=1 ;;
+        esac
+    done
+    if [[ -n $force ]]; then
+        local id
+        for id in $(svc_ids); do
+            { managed_process "$id" || force_free_port "$(svc_port "$id")" "$(svc_label "$id")"; } || true
+        done
+    fi
+    # Bajar en orden inverso; docker al final.
+    local ids=() id
+    while IFS= read -r id; do ids+=("$id"); done < <(svc_ids)
+    local i
+    for ((i = ${#ids[@]} - 1; i >= 0; i--)); do
+        [[ -n $keep && $(svc_type "${ids[i]}") == docker ]] && continue
+        svc_down "${ids[i]}"
+    done
+    ok "Listo"
+    notify "Stack detenido"
+}
+
+restart() {
+    local force="" what=() arg started elapsed
+    for arg in "$@"; do
+        case $arg in
+            --force) force=1 ;;
+            *) what+=("$arg") ;;
+        esac
+    done
+    started=$(date +%s)
+    if [[ ${#what[@]} -eq 0 ]]; then
+        for arg in $(svc_ids); do what+=("$arg"); done
+    fi
+    if [[ -n $force ]]; then
+        local id
+        for id in "${what[@]}"; do
+            { managed_process "$id" || force_free_port "$(svc_port "$id")" "$(svc_label "$id")"; } || true
+        done
+    fi
+    local id
+    for id in "${what[@]}"; do
+        svc_down "$id"
+        svc_up "$id"
+    done
+    elapsed=$(( $(date +%s) - started ))
+    report_ready "$elapsed" || true
+}
+
+# ---------------------------------------------------------------- reporte
+
+# Devuelve 0 sólo si los servicios con health responden y el resto escucha; así
+# no se abre una pestaña pensando mientras el dev server compila.
+report_ready() {
+    local elapsed=$1 bad="" id port health
+    for id in $(svc_ids); do
+        port=$(svc_port "$id")
+        health=$(svc_field "$id" health)
+        if [[ -n $health ]]; then
+            http_ok "$health" 5 || bad="$bad $(svc_label "$id")"
+        elif [[ -n $port ]]; then
+            port_open "$port" || bad="$bad $(svc_label "$id")"
+        fi
+    done
+    if [[ -n $bad ]]; then
+        warn "Faltó:$bad (${elapsed}s). Mirá 'devstack $CURRENT status' y los logs"
+        notify "Stack parcial en ${elapsed}s: falta$bad"
+        return 1
+    fi
+    local web
+    web=$(open_service)
+    if [[ -n $web ]]; then
+        local url
+        url=$(svc_field "$web" health)
+        [[ -n $url ]] || url=$(svc_field "$web" url)
+        if [[ -n $url ]] && ! http_ok "$url" 5; then
+            ok "Stack arriba en ${elapsed}s ($(svc_label "$web") todavía no contesta la 1ª ruta)"
+            notify "Stack arriba en ${elapsed}s: abrí $url cuando responda"
+            return 1
+        fi
+    fi
+    ok "Stack arriba en ${elapsed}s"
+    notify "Stack arriba en ${elapsed}s"
+    return 0
+}
+
+# Servicio que define el navegador: el que tenga "open": true, o el último.
+open_service() {
+    local id
+    while IFS= read -r id; do
+        [[ $(svc_field "$id" open) == true ]] && { printf '%s' "$id"; return 0; }
+    done < <(svc_ids)
+    svc_ids | tail -1
+}
+
+svc_url() {
+    local id=$1 u
+    u=$(svc_field "$id" url)
+    if [[ -z $u ]]; then
+        u=$(svc_field "$id" health)
+    fi
+    printf '%s' "$u"
+}
+
+open_url() {
+    local id=$1 url
+    [[ -n $id ]] || return 0
+    url=$(svc_url "$id")
+    [[ -n $url ]] || die "El servicio '$id' no declara url"
+    log "Abriendo $url"
+    if command -v omarchy-launch-browser >/dev/null 2>&1; then
+        omarchy-launch-browser "$url" >/dev/null 2>&1 &
+    else
+        xdg-open "$url" >/dev/null 2>&1 &
+    fi
+}
+
+print_urls() {
+    local id url
+    for id in $(svc_ids); do
+        url=$(svc_url "$id")
+        printf '  %-12s %s\n' "$(svc_label "$id")" "${url:-(sin url)}"
+    done
+}
+
+svc_state() {
+    local id=$1 port health up healthy managed
+    port=$(svc_port "$id")
+    health=$(svc_field "$id" health)
+    if [[ -n $port ]] && port_open "$port"; then up=true; else up=false; fi
+    if [[ -n $health ]] && http_ok "$health" 5; then healthy=true; else healthy=false; fi
+    if managed_process "$id"; then managed=true; else managed=false; fi
+    printf '%s' "{\"id\":\"$(svc_field "$id" id)\",\"label\":\"$(svc_label "$id")\",\"type\":\"$(svc_type "$id")\",\"port\":${port:-0},\"up\":$up,\"healthy\":$healthy,\"managed\":$managed,\"health\":\"$health\",\"url\":\"$(svc_url "$id")\"}"
+}
+
+json_status() {
+    local first=1 id out=""
+    for id in $(svc_ids); do
+        [[ $first == 1 ]] || out="$out,"
+        first=0
+        out="$out$(svc_state "$id")"
+    done
+    printf '{"project":"%s","name":"%s","dir":"%s","services":[%s],"open":"%s"}\n' \
+        "$CURRENT" "$DEVDATA_NAME" "$DIR" "$out" "$(open_service)"
+}
+
+status() {
+    printf '%s — %s\n' "$DEVDATA_NAME" "$DIR"
+    local id port health label type st owner
+    for id in $(svc_ids); do
+        label=$(svc_label "$id")
+        port=$(svc_port "$id")
+        type=$(svc_type "$id")
+        health=$(svc_field "$id" health)
+        if [[ -z $port ]] || ! port_open "$port"; then
+            printf '  %-12s %-6s %s\n' "$label" "${port:+:$port}" "detenido"
+            continue
+        fi
+        if [[ -n $health ]]; then
+            if http_ok "$health" 4; then st="respondiendo"; else st="puerto abierto"; fi
+        else
+            st="escuchando"
+        fi
+        if [[ $type == docker ]]; then
+            st="$st (contenedor: $(container_status "$id"))"
+        elif managed_process "$id"; then
+            st="$st (gestionado, pid $(<"$(svc_pidfile "$id")"))"
+        else
+            owner=$(port_owner "$port")
+            st="$st (ajeno${owner:+, pid $owner})"
+        fi
+        printf '  %-12s %-6s %s\n' "$label" ":$port" "$st"
+    done
+    print_urls
+    printf '  %-12s %s\n' "logs" "$RUNTIME_DIR"
+}
+
+logs() {
+    local what="${1:-}"
+    if [[ -z $what ]]; then
+        local id
+        for id in $(svc_ids); do tail_log "$(svc_logfile "$id")"; done
+        printf '  seguí uno con: devstack %s logs <id>\n' "$CURRENT" >&2
+        return 0
+    fi
+    [[ $(svc_type "$what") == docker ]] && { compose_logs "$what" | tail -n 200 -f; return 0; }
+    tail -n 200 -f "$(svc_logfile "$what")"
+}
+
+run_task() {
+    local task=$1 dir cmd
+    [[ -n $task ]] || die "task: falta el id"
+    dir=$(jq -r --arg id "$task" '.tasks[]? | select(.id == $id) | .dir // empty' "$CONFIG_FILE")
+    cmd=$(jq -r --arg id "$task" '.tasks[]? | select(.id == $id) | .cmd // empty' "$CONFIG_FILE")
+    [[ -n $cmd ]] || die "No existe la tarea '$task' (mirá 'devstack $CURRENT list')"
+    local d="$DIR"
+    [[ -n $dir ]] && d="$DIR/$dir"
+    local need
+    while IFS= read -r need; do
+        [[ -n $need ]] && svc_up "$need"
+    done < <(jq -r --arg id "$task" '.tasks[]? | select(.id == $id) | .needs[]?' "$CONFIG_FILE")
+    log "Tarea $task: $cmd"
+    ( cd "$d" && bash -lc "$cmd" )
+}
+
+list_all() {
+    printf '%s (%s)\n' "$DEVDATA_NAME" "$DIR"
+    local id
+    for id in $(svc_ids); do
+        printf '  servicio  %-12s %s\n' "$id" "$(svc_field "$id" cmd)$(svc_field "$id" compose)"
+    done
+    while IFS=$'\t' read -r tid tlabel tcmd; do
+        [[ -n $tid ]] && printf '  tarea     %-12s %s\n' "$tid" "${tlabel:-$tcmd}"
+    done < <(jq -r '.tasks[]? | "\(.id)\t\(.label // "")\t\(.cmd)"' "$CONFIG_FILE")
+}
+
+# Bloque JSONC para pegar en ~/.config/omarchy/extensions/omarchy-menu.jsonc.
+# Se arma con jq para que el escapado de las acciones sea correcto por
+# construcción (cada action termina envuelta en '...' para bash -lc).
+menu_block() {
+    local prefix=${1:-dev} base
+    base="${prefix}.${CURRENT}"
+    jq -c --arg base "$base" --arg p "$CURRENT" --arg name "$DEVDATA_NAME" '
+      def term($cmd): "omarchy-launch-terminal bash -lc " + ($cmd | @sh);
+      . as $cfg
+      | {
+          ($base): {icon: "", label: $name},
+          ($base + ".up"): {icon: "󰐊", label: "Levantar", when: ("! devstack " + $p + " --running"), action: term("devstack " + $p + " up || read -r")},
+          ($base + ".status"): {icon: "󱆃", label: "Estado", action: term("devstack " + $p + " status; read -r")},
+          ($base + ".open"): {icon: "󰖟", label: "Abrir en el navegador", checked: ("devstack " + $p + " --running"), action: ("devstack " + $p + " open")},
+          ($base + ".restart"): {icon: "󰜉", label: "Reiniciar", action: term("devstack " + $p + " restart || read -r")},
+          ($base + ".takeover"): {icon: "󰒓", label: "Tomar el control de puertos ajenos", when: ("devstack " + $p + " --foreign"), action: term("devstack " + $p + " up --force || read -r")},
+          ($base + ".down"): {icon: "󰍃", label: "Bajar", when: ("devstack " + $p + " --up"), action: term("devstack " + $p + " down || read -r")},
+          ($base + ".logs"): {icon: "", label: "Logs"}
+        }
+      + (reduce ($cfg.services[]) as $s ({}; . + {
+            ($base + ".logs." + $s.id): {icon: "", label: ($s.label // $s.id), action: term("devstack " + $p + " logs " + $s.id)}
+          }))
+      + (if (($cfg.tasks // []) | length) > 0 then
+           {($base + ".tasks"): {icon: "", label: "Tareas"}}
+           + (reduce ($cfg.tasks[]) as $t ({}; . + {
+                ($base + ".tasks." + $t.id): {icon: "", label: ($t.label // $t.id), action: term("devstack " + $p + " task " + $t.id + " || read -r")}
+              }))
+         else {} end)
+    ' "$CONFIG_FILE" | jq -r 'to_entries[] | "  \"\(.key)\": \(.value | tojson),"'
+}
+
+usage() {
+    sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//'
+}
+
+# ---------------------------------------------------------------- dispatch
+
+[[ $# -gt 0 ]] || { list_projects; exit 0; }
+
+case "$1" in
+    -h | --help | help)
+        usage
+        exit 0
+        ;;
+    list)
+        list_projects
+        exit 0
+        ;;
+esac
+
+CMD="${2:-up}"
+load_project "$1"
+[[ $# -gt 1 ]] && shift 2 || shift 1
+
+case "$CMD" in
+    up) up "$@" ;;
+    down) down "$@" ;;
+    restart) restart "$@" ;;
+    status) status ;;
+    json) json_status ;;
+    logs) logs "${1:-}" ;;
+    open) open_url "${1:-$(open_service)}" ;;
+    task) run_task "${1:-}" ;;
+    list) list_all ;;
+    menu) menu_block "${1:-dev}" ;;
+    --running)
+        rc=0
+        for id in $(svc_ids); do
+            h=$(svc_field "$id" health)
+            [[ -n $h ]] && { http_ok "$h" || rc=1; }
+        done
+        exit $rc
+        ;;
+    --up)
+        rc=0
+        for id in $(svc_ids); do
+            p=$(svc_port "$id")
+            [[ -n $p ]] && { port_open "$p" || rc=1; }
+        done
+        exit $rc
+        ;;
+    --foreign)
+        rc=1
+        for id in $(svc_ids); do
+            p=$(svc_port "$id")
+            [[ -n $p ]] || continue
+            if port_open "$p" && ! managed_process "$id" && [[ $(svc_type "$id") != docker ]]; then rc=0; fi
+        done
+        exit $rc
+        ;;
+    -h | --help | help) usage ;;
+    *)
+        # Un id de servicio como comando: levanta sólo ese.
+        if [[ -n $(svc_field "$CMD" id) ]]; then
+            svc_up "$CMD"
+        else
+            usage >&2
+            die "Comando desconocido: $CMD"
+        fi
+        ;;
+esac

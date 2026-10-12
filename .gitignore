@@ -1,0 +1,6 @@
+# runtime state lives outside the repo (~/.config, /run/user), nothing to ignore
+# beyond editor and local test leftovers
+*.log
+*.bak.*
+.DS_Store
+/tmp/
