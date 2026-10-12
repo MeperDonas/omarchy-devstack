@@ -222,16 +222,10 @@ if ((PATCH_MENU)); then
             }
           }
         ' "$MENU_JSONC" >"$block.out"
-        if ! command -v python3 >/dev/null; then
+        if ! command -v python3 >/dev/null || [[ ! -f $REPO/scripts/jsonc-check.py ]]; then
             rm -f "$block.out"
             warn "Sin python3 no puedo validar el menú; generá el bloque con 'devstack <proyecto> menu' y pegalo a mano"
-        elif python3 - "$block.out" <<'PY' >/dev/null 2>&1
-import json, re, sys, pathlib
-raw = pathlib.Path(sys.argv[1]).read_text()
-stripped = re.sub(r",(\s*[}\]])", r"\1", re.sub(r"^\s*//[^\n]*(\n|$)", "", raw, flags=re.M))
-json.loads(stripped)
-PY
-        then
+        elif python3 "$REPO/scripts/jsonc-check.py" "$block.out" >/dev/null; then
             run mv "$block.out" "$MENU_JSONC"
             ok "menú de Omarchy actualizado"
         else

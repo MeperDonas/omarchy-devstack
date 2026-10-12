@@ -75,12 +75,8 @@ jobs:
           set -euo pipefail
           export DEVDATA_CONFIG="$PWD/config"
           { echo "{"; bin/devstack demo menu; echo "}"; } > /tmp/menu.jsonc
-          python3 - <<'PY'
-import json, re, pathlib
-raw = pathlib.Path("/tmp/menu.jsonc").read_text()
-stripped = re.sub(r",(\s*[}\]])", r"\1", re.sub(r"^\s*//[^\n]*(\n|$)", "", raw, flags=re.M))
-data = json.loads(stripped)
-assert "dev.demo.up" in data, data.keys()
-assert "omarchy-launch-terminal" in data["dev.demo.up"]["action"]
-print("menu block ok:", len(data), "rows")
-PY
+          python3 scripts/jsonc-check.py /tmp/menu.jsonc > /tmp/menu.json
+          jq -e 'has("dev.demo.up")' /tmp/menu.json > /dev/null
+          jq -e '.["dev.demo.up"].action | contains("omarchy-launch-terminal")' /tmp/menu.json > /dev/null
+          jq -e 'length > 5' /tmp/menu.json > /dev/null
+          jq -r '"menu block ok: \(length) rows"' /tmp/menu.json
