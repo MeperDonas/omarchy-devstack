@@ -496,25 +496,25 @@ down() {
 }
 
 restart() {
-    local force="" what=() arg started elapsed
+    local force="" targets=() arg started elapsed
     for arg in "$@"; do
         case $arg in
             --force) force=1 ;;
-            *) what+=("$arg") ;;
+            *) targets+=("$arg") ;;
         esac
     done
     started=$(date +%s)
-    if [[ ${#what[@]} -eq 0 ]]; then
-        for arg in $(svc_ids); do what+=("$arg"); done
+    if [[ ${#targets[@]} -eq 0 ]]; then
+        for arg in $(svc_ids); do targets+=("$arg"); done
     fi
     if [[ -n $force ]]; then
         local id
-        for id in "${what[@]}"; do
+        for id in "${targets[@]}"; do
             { managed_process "$id" || force_free_port "$(svc_port "$id")" "$(svc_label "$id")"; } || true
         done
     fi
     local id
-    for id in "${what[@]}"; do
+    for id in "${targets[@]}"; do
         svc_down "$id"
         svc_up "$id"
     done
