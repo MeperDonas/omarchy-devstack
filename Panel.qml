@@ -23,6 +23,9 @@ Panel {
   readonly property int refreshInterval: setting("refreshIntervalSec", 5)
   readonly property int pendingTimeout: setting("pendingTimeoutSec", 300)
   readonly property int stuckAfterPolls: setting("stuckAfterPolls", 6)
+  // El panel ya muestra el progreso: desde acá los avisos de escritorio sólo
+  // traen el resultado (si no, caen encima del propio panel). all | final | off
+  readonly property string notifyMode: setting("notifyMode", "final")
   readonly property color colorOff: setting("colorOff", "#7A8394")
   readonly property color colorError: setting("colorError", "#E05561")
   readonly property color colorWorking: setting("colorWorking", "#E5B454")
@@ -115,10 +118,11 @@ Panel {
     root.pendingSeconds = 0
   }
   function runCommand(command) {
-    // El popup se cierra: la barra queda visible y avisa por notificación.
+    // El popup se cierra: la barra queda visible y el resultado llega por
+    // notificación (sólo el resultado, ver notifyMode).
     close()
     refreshTimer.restart()
-    bar.run(command)
+    bar.run("DEVDATA_NOTIFY=" + root.notifyMode + " " + command)
   }
   // Lo que sigue saliendo por stdout (los logs) necesita una terminal: la barra
   // no tiene dónde mostrarlo, y por eso `logs` parecía no hacer nada. El
@@ -127,7 +131,7 @@ Panel {
   function runInTerminal(command) {
     close()
     refreshTimer.restart()
-    bar.run("omarchy-launch-terminal bash -lc '" + command + " || read -r'")
+    bar.run("omarchy-launch-terminal bash -lc '" + "DEVDATA_NOTIFY=" + root.notifyMode + " " + command + " || read -r'")
   }
   function run(argument) {
     if (argument === "down") startPending("down")

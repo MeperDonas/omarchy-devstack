@@ -148,7 +148,23 @@ devstack <p> --running | --up | --foreign   # guards for the menu
 ```
 
 `DEVDATA_CONFIG` (config dir), `DEVDATA_PROJECT` (default project),
-`DEVDATA_WAIT_SCALE` (multiply waits) override the defaults.
+`DEVDATA_WAIT_SCALE` (multiply waits) and `DEVDATA_NOTIFY` (`all` | `final` |
+`off`) override the defaults.
+
+### Notifications
+
+The panel already shows the progress (state chip, one chip per service, the
+working animation), so notifications only carry the **outcome** when an action
+comes from the bar: `Stack arriba en 42s`, `Stack parcial…`, or the error. That
+is what keeps the popup from covering a pile of its own "compiling…" notices —
+Omarchy anchors notifications next to the bar, exactly where the widget lives.
+
+- `final` (default in the widget): only the outcome.
+- `all`: every stage (useful from the menu or a terminal, where there is no panel).
+- `off`: silence.
+
+Set it per widget instance in the Omarchy settings UI (`notifyMode`) or with
+`DEVDATA_NOTIFY` on any CLI call.
 
 ## Several projects on the bar
 
@@ -220,6 +236,11 @@ Mirá la tabla de campos de arriba y `config/example.json`.
 **Usar.** `devstack` lista los proyectos; `devstack <p> up|down|restart|status|
 logs|open|task`. Desde la barra: un click y los botones. Cuatro colores: gris
 apagado, rojo error, amarillo trabajando, verde arriba.
+
+**Avisos.** El panel ya muestra el progreso, así que desde la barra sólo llega
+el **resultado** (`final`, por defecto) y no una notificación por etapa que
+además quedaría encima del panel. `all` para todo, `off` para silencio
+(ajuste `notifyMode` del widget, o `DEVDATA_NOTIFY` en el CLI).
 
 **Lo importante.** No toca procesos que no levantó él (los marca `ajeno`/`ext`),
 no deja `nest`/`next` huérfanos y avisa por notificación en cada etapa. Con
