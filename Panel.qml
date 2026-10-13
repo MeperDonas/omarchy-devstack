@@ -121,11 +121,13 @@ Panel {
     bar.run(command)
   }
   // Lo que sigue saliendo por stdout (los logs) necesita una terminal: la barra
-  // no tiene dónde mostrarlo, y por eso `logs` parecía no hacer nada.
+  // no tiene dónde mostrarlo, y por eso `logs` parecía no hacer nada. El
+  // `|| read -r` final deja la ventana abierta si algo falla, para que el
+  // mensaje no se pierda en un parpadeo.
   function runInTerminal(command) {
     close()
     refreshTimer.restart()
-    bar.run("omarchy-launch-terminal bash -lc '" + command + "'")
+    bar.run("omarchy-launch-terminal bash -lc '" + command + " || read -r'")
   }
   function run(argument) {
     if (argument === "down") startPending("down")

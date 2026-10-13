@@ -140,17 +140,21 @@ svc_type() { local t; t=$(svc_field "$1" type); printf '%s' "${t:-process}"; }
 svc_pidfile() { printf '%s/%s.pid' "$RUNTIME_DIR" "$1"; }
 svc_logfile() { printf '%s/%s.log' "$RUNTIME_DIR" "$1"; }
 
+# Une un directorio base con el valor declarado, respetando rutas absolutas.
+join_dir() {
+    local base=$1 value=$2
+    if [[ -z $value ]]; then
+        printf '%s' "$base"
+    elif [[ $value == /* ]]; then
+        printf '%s' "$value"
+    else
+        printf '%s/%s' "$base" "$value"
+    fi
+}
+
 # Ruta absoluta de un campo de directorio del servicio, relativa al proyecto.
 svc_dir() {
-    local id=$1 d
-    d=$(svc_field "$id" dir)
-    if [[ -z $d ]]; then
-        printf '%s' "$DIR"
-    elif [[ $d == /* ]]; then
-        printf '%s' "$d"
-    else
-        printf '%s/%s' "$DIR" "$d"
-    fi
+    join_dir "$DIR" "$(svc_field "$1" dir)"
 }
 
 docker_needed() {
@@ -671,8 +675,8 @@ run_task() {
     dir=$(jq -r --arg id "$task" '.tasks[]? | select(.id == $id) | .dir // empty' "$CONFIG_FILE")
     cmd=$(jq -r --arg id "$task" '.tasks[]? | select(.id == $id) | .cmd // empty' "$CONFIG_FILE")
     [[ -n $cmd ]] || die "No existe la tarea '$task' (mirá 'devstack $CURRENT list')"
-    local d="$DIR"
-    [[ -n $dir ]] && d="$DIR/$dir"
+    local d
+    d=$(join_dir "$DIR" "$dir")
     local need
     while IFS= read -r need; do
         [[ -n $need ]] && svc_up "$need"
