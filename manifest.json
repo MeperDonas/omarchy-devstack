@@ -2,11 +2,13 @@
   "schemaVersion": 1,
   "id": "meperdonas.devstack",
   "name": "devstack",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "author": "Santiago Villabona (MeperDonas)",
   "license": "MIT",
   "description": "One bar icon per local dev stack: lift, watch and drop docker services and dev servers, in order, with a four-colour state and a take-over button for ports held by stray processes.",
-  "kinds": ["bar-widget"],
+  "kinds": [
+    "bar-widget"
+  ],
   "activation": "on-demand",
   "entryPoints": {
     "barWidget": "Panel.qml"
@@ -15,7 +17,12 @@
     "displayName": "devstack",
     "description": "Local dev stacks (docker + dev servers) with four-colour state and take-over of stray ports.",
     "category": "Development",
-    "aliases": ["devstack", "dev-stack", "local stack", "dev servers"],
+    "aliases": [
+      "devstack",
+      "dev-stack",
+      "local stack",
+      "dev servers"
+    ],
     "allowMultiple": true,
     "defaultSection": "right",
     "defaults": {

@@ -120,6 +120,13 @@ Panel {
     refreshTimer.restart()
     bar.run(command)
   }
+  // Lo que sigue saliendo por stdout (los logs) necesita una terminal: la barra
+  // no tiene dónde mostrarlo, y por eso `logs` parecía no hacer nada.
+  function runInTerminal(command) {
+    close()
+    refreshTimer.restart()
+    bar.run("omarchy-launch-terminal bash -lc '" + command + "'")
+  }
   function run(argument) {
     if (argument === "down") startPending("down")
     else if (argument === "up" || argument.indexOf("restart") === 0) startPending("up")
@@ -373,14 +380,14 @@ Panel {
         anchors.horizontalCenter: parent.horizontalCenter
         spacing: 8
         ActionButton { label: "Abrir"; icon: "󰖟"; enabled: root.openSvc !== undefined && root.openSvc.up && !root.starting; onTriggered: root.run("open") }
-        ActionButton { label: "Logs"; icon: "󱆃"; enabled: root.openService !== ""; onTriggered: root.run("logs " + root.openService) }
+        ActionButton { label: "Logs"; icon: "󱆃"; enabled: root.openService !== ""; onTriggered: root.runInTerminal(cli + projectArg + " logs " + root.openService) }
       }
 
       Row {
         anchors.horizontalCenter: parent.horizontalCenter
         spacing: 8
         ActionButton { label: "Reiniciar"; icon: "󰜉"; enabled: root.anyUp && !root.starting; onTriggered: root.run("restart") }
-        ActionButton { label: "Menú"; icon: "󰒓"; enabled: true; onTriggered: root.runCommand("omarchy menu summon dev" + root.effectiveProject) }
+        ActionButton { label: "Menú"; icon: "󰒓"; enabled: true; onTriggered: root.runCommand("omarchy menu summon " + (root.effectiveProject !== "" ? "dev." + root.effectiveProject : "dev")) }
       }
 
       ActionButton {
@@ -449,21 +456,22 @@ Panel {
       anchors.centerIn: parent
       spacing: 2
       Text {
-        anchors.horizontalCenter: parent.horizontalCenter
+        width: buttonRoot.width - 12
+        horizontalAlignment: Text.AlignHCenter
         text: buttonRoot.icon
         color: bar ? bar.foreground : "white"
         font.family: bar ? bar.fontFamily : "monospace"
         font.pixelSize: 17
       }
       Text {
-        anchors.horizontalCenter: parent.horizontalCenter
+        width: buttonRoot.width - 12
+        horizontalAlignment: Text.AlignHCenter
         text: buttonRoot.label
         color: bar ? bar.foreground : "white"
         font.family: bar ? bar.fontFamily : "monospace"
         font.pixelSize: 10
         wrapMode: Text.NoWrap
         elide: Text.ElideRight
-        width: buttonRoot.width - 12
       }
     }
 
