@@ -651,7 +651,7 @@ status() {
 }
 
 logs() {
-    local what="${1:-}"
+    local what="${1:-}" logfile
     if [[ -z $what ]]; then
         local id
         for id in $(svc_ids); do tail_log "$(svc_logfile "$id")"; done
@@ -660,7 +660,9 @@ logs() {
     fi
     [[ -n $(svc_field "$what" id) ]] || die "No existe el servicio '$what' (mirá 'devstack $CURRENT list')"
     [[ $(svc_type "$what") == docker ]] && { compose_logs "$what" | tail -n 200 -f; return 0; }
-    tail -n 200 -f "$(svc_logfile "$what")"
+    logfile=$(svc_logfile "$what")
+    [[ -r $logfile ]] || die "Todavía no hay log de $(svc_label "$what") ($logfile): el servicio no arrancó"
+    tail -n 200 -f "$logfile"
 }
 
 run_task() {
