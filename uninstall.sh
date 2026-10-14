@@ -36,6 +36,7 @@ else
 fi
 
 rm -f "$BIN_DIR/devstack" && ok "CLI borrado" || log "El CLI no estaba en $BIN_DIR"
+rm -f "$BIN_DIR/devstack-mcp" && ok "servidor MCP borrado" || true
 
 if [[ -f $MENU_JSONC ]]; then
     cp -a "$MENU_JSONC" "$MENU_JSONC.bak.$STAMP"

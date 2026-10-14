@@ -1,0 +1,222 @@
+#!/usr/bin/env bash
+# devstack-mcp — servidor MCP (Model Context Protocol) sobre stdio, para que un
+# agente de código (omp, opencode, claude, codex, pi, herdr, …) pueda ver y
+# manejar tus stacks locales sin que vos abras una terminal.
+#
+# No es más que un traductor: cada tool llama al CLI `devstack`, así que las
+# garantías son las mismas (no toca procesos que no levantó él, los pidfiles
+# viven en el runtime del usuario, `down` mata el grupo entero, etc.).
+#
+# Uso (en la config MCP del agente):
+#   { "command": "/home/USUARIO/.local/bin/devstack-mcp" }
+#
+# Tools: devstack_list, devstack_status, devstack_scan, devstack_declare,
+#        devstack_up, devstack_down, devstack_logs, devstack_here
+#
+# Requiere: bash + jq. Sin dependencias de red ni de Omarchy (el CLI hace el
+# trabajo; si `omarchy-cmd-terminal-cwd` no existe, `here` cae al cwd).
+
+set -uo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -x $SCRIPT_DIR/devstack ]]; then
+    DEVSTACK="$SCRIPT_DIR/devstack"
+elif command -v devstack >/dev/null 2>&1; then
+    DEVSTACK="$(command -v devstack)"
+else
+    DEVSTACK="devstack"
+fi
+
+SERVER_NAME="devstack"
+SERVER_VERSION="1.0.0"
+DEFAULT_PROTOCOL="2024-11-05"
+
+log() { printf '%s\n' "$*" >&2; } # a stderr: stdout es el canal del protocolo
+
+# ---------------------------------------------------------------- respuestas
+
+rpc_result() { # rpc_result <id-json> <result-json>
+    jq -nc --argjson id "$1" --argjson result "$2" '{jsonrpc:"2.0", id:$id, result:$result}'
+}
+
+rpc_error() { # rpc_error <id-json> <code> <mensaje>
+    jq -nc --argjson id "$1" --argjson code "$2" --arg message "$3" \
+        '{jsonrpc:"2.0", id:$id, error:{code:$code, message:$message}}'
+}
+
+tool_text() { # tool_text <id-json> <texto> [isError]
+    jq -nc --argjson id "$1" --arg text "$2" --argjson err "${3:-false}" \
+        '{jsonrpc:"2.0", id:$id, result:{content:[{type:"text", text:$text}], isError:$err}}'
+}
+
+# Salida de un comando del CLI como texto (jamás rompe el protocolo).
+run_cli() {
+    local out rc
+    out=$("$DEVSTACK" "$@" 2>&1)
+    rc=$?
+    printf '%s' "$out"
+    return $rc
+}
+
+# ---------------------------------------------------------------- tools
+
+tools_json() {
+    jq -nc '{tools:[
+      {name:"devstack_list",
+       description:"List every declared dev stack (project id, name, directory, how many services are up).",
+       inputSchema:{type:"object", properties:{}, additionalProperties:false}},
+      {name:"devstack_status",
+       description:"Status of a project or of all of them: per-service up/healthy, ports, URLs. Use it to see whether a stack is already running before starting anything.",
+       inputSchema:{type:"object", properties:{
+         project:{type:"string", description:"Project id. Omit for every project."}},
+         additionalProperties:false}},
+      {name:"devstack_here",
+       description:"Resolve which declared project a path belongs to (defaults to the server working directory). Returns declared=false with the repository root when the repo is not declared yet.",
+       inputSchema:{type:"object", properties:{
+         path:{type:"string", description:"Directory to resolve (default: the current directory)."}},
+         additionalProperties:false}},
+      {name:"devstack_scan",
+       description:"Read-only: inspect a repository and propose the stack (services, ports, health checks, tasks) without writing anything. Works on any project, declared or not.",
+       inputSchema:{type:"object", properties:{
+         path:{type:"string", description:"Repository directory to analyse."}},
+         required:["path"], additionalProperties:false}},
+      {name:"devstack_declare",
+       description:"Run the detector on a repository and write its project config into ~/.config/devstack/<name>.json. Refuses to overwrite an existing project or to declare the same directory twice.",
+       inputSchema:{type:"object", properties:{
+         path:{type:"string"}, name:{type:"string", description:"Project id to use (default: the directory name, lowercased)."}},
+         required:["path"], additionalProperties:false}},
+      {name:"devstack_up",
+       description:"Start a project stack in the background (docker first, then dev servers, waiting for each port/health check) and return immediately: poll devstack_status to follow it. Idempotent.",
+       inputSchema:{type:"object", properties:{
+         project:{type:"string"}, force:{type:"boolean", description:"Also take over ports held by processes devstack did not start."}},
+         required:["project"], additionalProperties:false}},
+      {name:"devstack_down",
+       description:"Stop a project stack: process groups first, docker last. Never touches processes it did not start.",
+       inputSchema:{type:"object", properties:{
+         project:{type:"string"}, keepDocker:{type:"boolean", description:"Leave the docker services running."}},
+         required:["project"], additionalProperties:false}},
+      {name:"devstack_logs",
+       description:"Last lines of a service log (no follow), to diagnose why something failed to start.",
+       inputSchema:{type:"object", properties:{
+         project:{type:"string"}, service:{type:"string"}, lines:{type:"integer", minimum:1, maximum:2000}},
+         required:["project"], additionalProperties:false}}
+    ]}'
+}
+
+call_tool() { # call_tool <id-json> <nombre> <args-json>
+    local id=$1 name=$2 args=$3 project path out rc
+    project=$(printf '%s' "$args" | jq -r '.project // empty')
+    path=$(printf '%s' "$args" | jq -r '.path // empty')
+
+    case $name in
+    devstack_list)
+        if out=$(run_cli all json); then tool_text "$id" "$out"; else tool_text "$id" "$out" true; fi
+        ;;
+    devstack_status)
+        if [[ -n $project ]]; then
+            if out=$(run_cli "$project" json); then tool_text "$id" "$out"; else tool_text "$id" "$out" true; fi
+        else
+            if out=$(run_cli all json); then tool_text "$id" "$out"; else tool_text "$id" "$out" true; fi
+        fi
+        ;;
+    devstack_here)
+        if [[ -n $path ]]; then
+            out=$(cd "$path" 2>/dev/null && run_cli here json) || out="No existe el directorio: $path"
+        else
+            out=$(run_cli here json)
+        fi
+        tool_text "$id" "$out"
+        ;;
+    devstack_scan)
+        if [[ -z $path ]]; then
+            tool_text "$id" "Falta 'path'" true
+        elif out=$(run_cli scan "$path" --json); then
+            tool_text "$id" "$out"
+        else
+            tool_text "$id" "$out" true
+        fi
+        ;;
+    devstack_declare)
+        if [[ -z $path ]]; then
+            tool_text "$id" "Falta 'path'" true
+        else
+            local name_arg=()
+            [[ -n $(printf '%s' "$args" | jq -r '.name // empty') ]] && name_arg=(--name "$(printf '%s' "$args" | jq -r '.name')")
+            if out=$(run_cli add "$path" "${name_arg[@]}"); then tool_text "$id" "$out"; else tool_text "$id" "$out" true; fi
+        fi
+        ;;
+    devstack_up)
+        if [[ -z $project ]]; then
+            tool_text "$id" "Falta 'project'" true
+            return 0
+        fi
+        # En segundo plano a propósito: levantar puede tardar (compilaciones) y el
+        # agente puede seguir el avance con devstack_status.
+        local force=""
+        [[ $(printf '%s' "$args" | jq -r '.force // false') == true ]] && force=--force
+        mkdir -p "${XDG_RUNTIME_DIR:-/tmp}/devstack" 2>/dev/null || true
+        setsid "$DEVSTACK" "$project" up $force >>"${XDG_RUNTIME_DIR:-/tmp}/devstack/mcp.log" 2>&1 &
+        tool_text "$id" "Levantando $project en segundo plano (mirá devstack_status para seguir el avance)."
+        ;;
+    devstack_down)
+        if [[ -z $project ]]; then
+            tool_text "$id" "Falta 'project'" true
+            return 0
+        fi
+        local keep=()
+        [[ $(printf '%s' "$args" | jq -r '.keepDocker // false') == true ]] && keep=(--keep-docker)
+        if out=$(run_cli "$project" down "${keep[@]}"); then tool_text "$id" "$out"; else tool_text "$id" "$out" true; fi
+        ;;
+    devstack_logs)
+        local svc lines
+        svc=$(printf '%s' "$args" | jq -r '.service // empty')
+        lines=$(printf '%s' "$args" | jq -r '.lines // 80')
+        if [[ -z $project ]]; then
+            tool_text "$id" "Falta 'project'" true
+        elif [[ -z $svc ]]; then
+            out=$(run_cli "$project" logs)
+            tool_text "$id" "$out"
+        else
+            out=$("$DEVSTACK" "$project" logs "$svc" 2>&1 | tail -n "$lines")
+            tool_text "$id" "$out"
+        fi
+        ;;
+    *)
+        tool_text "$id" "Tool desconocida: $name" true
+        ;;
+    esac
+}
+
+# ---------------------------------------------------------------- bucle
+
+while IFS= read -r line; do
+    [[ -n ${line//[[:space:]]/} ]] || continue
+    id=$(printf '%s' "$line" | jq -c '.id // empty' 2>/dev/null)
+    method=$(printf '%s' "$line" | jq -r '.method // empty' 2>/dev/null)
+
+    case $method in
+    initialize)
+        proto=$(printf '%s' "$line" | jq -r '.params.protocolVersion // empty' 2>/dev/null)
+        [[ -n $proto ]] || proto="$DEFAULT_PROTOCOL"
+        # Se responde la versión que propuso el cliente: es lo que aceptan los
+        # clientes actuales (y evita desconexiones por versión).
+        rpc_result "${id:-null}" "$(jq -nc --arg pv "$proto" --arg n "$SERVER_NAME" --arg v "$SERVER_VERSION" \
+            '{protocolVersion:$pv, capabilities:{tools:{listChanged:false}}, serverInfo:{name:$n, version:$v}}')"
+        ;;
+    notifications/initialized | notifications/cancelled | '') ;;
+    ping)
+        [[ -n $id ]] && rpc_result "$id" '{}'
+        ;;
+    tools/list)
+        rpc_result "$id" "$(tools_json)"
+        ;;
+    tools/call)
+        name=$(printf '%s' "$line" | jq -r '.params.name // empty' 2>/dev/null)
+        args=$(printf '%s' "$line" | jq -c '.params.arguments // {}' 2>/dev/null)
+        call_tool "$id" "$name" "${args:-{}}"
+        ;;
+    *)
+        [[ -n $id ]] && rpc_error "$id" -32601 "Method not found: $method"
+        ;;
+    esac
+done

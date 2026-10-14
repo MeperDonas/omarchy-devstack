@@ -44,6 +44,9 @@ jobs:
       - name: Session resolution
         run: ./test/here_test.sh
 
+      - name: MCP server
+        run: ./test/mcp_test.sh
+
   smoke:
     runs-on: ubuntu-24.04
     steps:

@@ -18,6 +18,7 @@ Panel {
   ipcTarget: "meperdonas.devstack"
 
   // ------------------------------------------------------------ ajustes
+  // all: el icono resume TODOS tus proyectos ("N/M arriba").
   // auto: el proyecto lo resuelve el CLI desde la ventana de terminal activa
   // (`devstack here json --window`), así el icono sigue lo que estás mirando.
   // fixed: el proyecto del ajuste `project`, como antes.
@@ -53,6 +54,7 @@ Panel {
   property bool declared: true
   property bool fallbackUsed: false
   property string repo: ""
+  property var projects: []
   property string suggested: ""
   property var services: []
   property string openService: ""
@@ -64,6 +66,14 @@ Panel {
   readonly property string projectArg: effectiveProject !== "" ? " " + effectiveProject : ""
 
   readonly property bool starting: pending !== ""
+  readonly property bool allMode: mode === "all"
+  readonly property int projectsTotal: projects.length
+  readonly property int projectsUp: {
+    var n = 0
+    for (var i = 0; i < projects.length; i++) if (projects[i].up > 0) n++
+    return n
+  }
+  readonly property bool everythingUp: projectsTotal > 0 && projects.every(function (p) { return p.allUp })
   // repo detectado pero sin declarar (se puede declarar con el detector)
   readonly property bool undeclared: loaded && !declared && repo !== ""
   // nada que mostrar (terminal fuera de cualquier repo)
@@ -84,7 +94,8 @@ Panel {
     return faltan.join(" + ")
   }
 
-  readonly property string stateKind: noProject ? "off"
+  readonly property string stateKind: allMode ? (!loaded ? "error" : everythingUp ? "ok" : projectsUp > 0 ? "working" : "off")
+    : noProject ? "off"
     : undeclared ? "working"
     : !loaded ? "error"
     : starting ? "working"
@@ -97,7 +108,11 @@ Panel {
     : stateKind === "working" ? colorWorking
     : colorOff
 
-  readonly property string stateText: noProject ? "Sin proyecto"
+  readonly property string stateText: allMode ? (!loaded ? "Sin datos"
+      : everythingUp ? "Todo arriba · " + projectsTotal
+      : projectsUp > 0 ? projectsUp + "/" + projectsTotal + " arriba"
+      : "Todo detenido")
+    : noProject ? "Sin proyecto"
     : undeclared ? "Sin declarar · " + name
     : !loaded ? "Sin datos"
     : pending === "up" ? (pendingSeconds >= pendingTimeout ? "No terminó de levantar" : "Levantando… " + pendingSeconds + "s")
@@ -133,7 +148,7 @@ Panel {
     return "Tomar el control (" + (ids.length || 1) + " puertos)"
   }
 
-  implicitWidth: 30
+  implicitWidth: allMode ? 50 : 30
   implicitHeight: bar ? bar.barSize : 26
 
   function refresh() { if (!probe.running) probe.running = true }
@@ -166,8 +181,9 @@ Panel {
 
   Process {
     id: probe
-    command: ["/bin/bash", "-lc", root.mode === "fixed"
-      ? cli + root.projectArg + " json"
+    command: ["/bin/bash", "-lc", root.allMode
+      ? cli + " all json"
+      : root.mode === "fixed" ? cli + root.projectArg + " json"
       : cli + " here json --window"]
     stdout: StdioCollector { id: probeOutput }
     onExited: {
@@ -182,6 +198,16 @@ Panel {
         return
       }
       root.loaded = true
+      if (root.allMode) {
+        // all json devuelve un array de proyectos
+        root.projects = data
+        root.services = []
+        root.name = "devstack"
+        root.declared = true
+        if (root.pending === "up" && root.everythingUp) root.pending = ""
+        if (root.pending !== "" && root.pendingSeconds >= root.pendingTimeout) root.pending = ""
+        return
+      }
       root.declared = data.declared !== false
       if (!root.declared && root.mode === "auto") {
         // Sin proyecto declarado para la terminal activa: o hay un repo que
@@ -266,9 +292,12 @@ Panel {
     color: mouse.containsMouse ? Qt.rgba(1, 1, 1, 0.10) : "transparent"
 
     // Sin spinner: el icono respira mientras hay una acción en curso.
+    Row {
+      anchors.centerIn: parent
+      spacing: 1
+
     Text {
       id: barGlyph
-      anchors.centerIn: parent
       text: "󰒋"
       color: root.stateColor
       font.family: bar ? bar.fontFamily : "monospace"
@@ -281,6 +310,16 @@ Panel {
         NumberAnimation { from: 0.45; to: 1; duration: 950; easing.type: Easing.InOutSine }
         NumberAnimation { from: 1; to: 0.45; duration: 950; easing.type: Easing.InOutSine }
       }
+    }
+
+    Text {
+      visible: root.allMode
+      anchors.verticalCenter: parent.verticalCenter
+      text: root.projectsUp + "/" + root.projectsTotal
+      color: root.stateColor
+      font.family: bar ? bar.fontFamily : "monospace"
+      font.pixelSize: 9
+    }
     }
 
     MouseArea {
@@ -426,11 +465,65 @@ Panel {
         }
       }
 
+      // Modo all: un renglón por proyecto.
+      Column {
+        visible: root.allMode
+        width: contentColumn.width
+        spacing: 5
+
+        Repeater {
+          model: root.projects
+
+          Row {
+            width: parent.width
+            spacing: 6
+            Rectangle {
+              width: 7
+              height: 7
+              radius: 3.5
+              anchors.verticalCenter: parent.verticalCenter
+              color: modelData.allUp ? root.colorOk : (modelData.up > 0 ? root.colorWorking : root.colorOff)
+            }
+            Text {
+              text: modelData.name
+              width: parent.width - 70
+              elide: Text.ElideRight
+              color: bar ? bar.foreground : "white"
+              font.family: bar ? bar.fontFamily : "monospace"
+              font.pixelSize: 11
+              anchors.verticalCenter: parent.verticalCenter
+            }
+            Text {
+              text: modelData.up + "/" + modelData.total
+              color: modelData.allUp ? root.colorOk : (modelData.up > 0 ? root.colorWorking : root.colorOff)
+              font.family: bar ? bar.fontFamily : "monospace"
+              font.pixelSize: 10
+              anchors.verticalCenter: parent.verticalCenter
+            }
+          }
+        }
+      }
+
+      Row {
+        anchors.horizontalCenter: parent.horizontalCenter
+        visible: root.allMode
+        spacing: 8
+        ActionButton { wide: true; label: "Levantar lo que falta"; icon: "󰐊"; enabled: !root.starting && !root.everythingUp; onTriggered: root.runInTerminal(cli + " all up") }
+      }
+
+      Row {
+        anchors.horizontalCenter: parent.horizontalCenter
+        visible: root.allMode
+        spacing: 8
+        ActionButton { wide: true; label: "Bajar todo"; icon: "󰍃"; enabled: !root.starting && root.projectsUp > 0; onTriggered: root.runInTerminal(cli + " all down") }
+      }
+
       // Un chip por servicio declarado en el JSON del proyecto.
       Flow {
         anchors.horizontalCenter: parent.horizontalCenter
         width: contentColumn.width
         spacing: 6
+        visible: !root.allMode
 
         Repeater {
           model: root.services
@@ -453,7 +546,7 @@ Panel {
 
       Row {
         anchors.horizontalCenter: parent.horizontalCenter
-        visible: root.declared
+        visible: root.declared && !root.allMode
         spacing: 8
         ActionButton { label: "Abrir"; icon: "󰖟"; enabled: root.openSvc !== undefined && root.openSvc.up && !root.starting; onTriggered: root.run("open") }
         ActionButton { label: "Logs"; icon: "󱆃"; enabled: root.openService !== ""; onTriggered: root.runInTerminal(cli + projectArg + " logs " + root.openService) }
@@ -461,7 +554,7 @@ Panel {
 
       Row {
         anchors.horizontalCenter: parent.horizontalCenter
-        visible: root.declared
+        visible: root.declared && !root.allMode
         spacing: 8
         ActionButton { label: "Reiniciar"; icon: "󰜉"; enabled: root.anyUp && !root.starting; onTriggered: root.run("restart") }
         ActionButton { label: "Menú"; icon: "󰒓"; enabled: true; onTriggered: root.runCommand("omarchy menu summon " + (root.effectiveProject !== "" ? "dev." + root.effectiveProject : "dev")) }
@@ -471,7 +564,7 @@ Panel {
       // terminal, para ver qué infirió antes de que escriba nada.
       ActionButton {
         anchors.horizontalCenter: parent.horizontalCenter
-        visible: root.undeclared
+        visible: root.undeclared && !root.allMode
         wide: true
         label: "Declarar este stack"
         icon: "󰐊"
@@ -481,7 +574,7 @@ Panel {
 
       ActionButton {
         anchors.horizontalCenter: parent.horizontalCenter
-        visible: root.declared && root.needsTakeover
+        visible: root.declared && !root.allMode && root.needsTakeover
         wide: true
         label: root.starting ? "Tomando el control…" : root.takeoverLabel
         icon: "󰒓"

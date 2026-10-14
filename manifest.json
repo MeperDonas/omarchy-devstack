@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "meperdonas.devstack",
   "name": "devstack",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "author": "Santiago Villabona (MeperDonas)",
   "license": "MIT",
   "description": "One bar icon per local dev stack: lift, watch and drop docker services and dev servers, in order, with a four-colour state, a take-over button for ports held by stray processes, and a detector that proposes the stack of any repository.",
@@ -45,10 +45,11 @@
         "label": "Which project",
         "options": [
           "auto",
+          "all",
           "fixed"
         ],
         "defaultValue": "auto",
-        "description": "auto: follow the terminal you are looking at (and offer to declare the repo if it is not declared yet). fixed: always the project below."
+        "description": "auto: follow the terminal you are looking at. all: one icon summarising every project. fixed: always the project below."
       },
       {
         "key": "project",

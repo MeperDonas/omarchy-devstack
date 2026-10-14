@@ -123,6 +123,8 @@ ok "plugin → $PLUGINS_DIR/$PLUGIN_ID"
 run mkdir -p "$BIN_DIR" "$DEVDATA_DIR"
 run install -m 755 "$REPO/bin/devstack" "$BIN_DIR/devstack"
 ok "CLI → $BIN_DIR/devstack"
+run install -m 755 "$REPO/bin/devstack-mcp" "$BIN_DIR/devstack-mcp"
+ok "servidor MCP → $BIN_DIR/devstack-mcp"
 
 # La detección (scan/add) vive en lib/; se copia junto al CLI para que también
 # funcione si alguien lo instaló fuera del repo.

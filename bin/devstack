@@ -891,6 +891,74 @@ here() {
     esac
 }
 
+# --- vista global (todos TUS proyectos) --------------------------------------
+# Sólo los proyectos del usuario: los ejemplos que viajan con el plugin no son
+# "tus" stacks (no entran en `all` ni en la resolución de `here`).
+list_user_projects() {
+    local f
+    for f in "$USER_CONFIG_DIR"/*.json; do
+        [[ -r $f ]] || continue
+        basename "$f" .json
+    done
+}
+
+# Estado resumido de un proyecto (una línea JSON).
+project_snapshot() {
+    local p=$1 inner
+    inner=$("$0" "$p" json 2>/dev/null) || return 1
+    printf '%s' "$inner" | jq -c '{project: .project, name: .name, dir: .dir,
+        up: ([.services[] | select(.up)] | length),
+        total: (.services | length),
+        allUp: (([.services[] | select(if .health != "" then .healthy else .up end)] | length) == (.services | length)),
+        services: [.services[] | {id: .id, label: .label, up: .up, healthy: .healthy}]}'
+}
+
+# devstack all [json|status|up|down]
+all_cmd() {
+    local sub=${1:-status} p s
+    local projects=() snaps=()
+    while IFS= read -r p; do [[ -n $p ]] && projects+=("$p"); done < <(list_user_projects)
+    if [[ ${#projects[@]} -eq 0 ]]; then
+        die "No hay proyectos declarados (devstack add <dir> o devstack init <nombre>)"
+    fi
+    case $sub in
+        json)
+            for p in "${projects[@]}"; do
+                s=$(project_snapshot "$p") || continue
+                snaps+=("$s")
+            done
+            printf '[%s]\n' "$(printf '%s\n' "${snaps[@]:-}" | grep -v '^$' | paste -sd, -)"
+            ;;
+        status)
+            printf '%-14s %-18s %-7s %s\n' PROYECTO NOMBRE ARRIBA ESTADO
+            for p in "${projects[@]}"; do
+                s=$(project_snapshot "$p") || continue
+                printf '%-14s %-18s %-7s %s\n' "$p" \
+                    "$(printf '%s' "$s" | jq -r .name)" \
+                    "$(printf '%s' "$s" | jq -r '"\(.up)/\(.total)"')" \
+                    "$(printf '%s' "$s" | jq -r '[.services[] | (if .healthy then "✓" elif .up then "~" else "·" end)] | join("")')"
+            done
+            ;;
+        up)
+            local failed=0
+            for p in "${projects[@]}"; do
+                log "— $p"
+                "$0" "$p" up || failed=1
+            done
+            ((failed)) && die "Algún proyecto no quedó arriba (mirá 'devstack all status')"
+            notify_result "Todos los stacks arriba"
+            ;;
+        down)
+            local i
+            for ((i = ${#projects[@]} - 1; i >= 0; i--)); do
+                "$0" "${projects[$i]}" down
+            done
+            notify_result "Todos los stacks detenidos"
+            ;;
+        *) die "all: usá json|status|up|down" ;;
+    esac
+}
+
 # --- detección (scan/add) ---------------------------------------------------
 require_scan() {
     [[ -n $SCAN_LIB ]] || die "scan/add necesitan lib/scan.sh: usá el CLI que viene dentro del plugin (o instalá con ./install.sh)"
@@ -1074,6 +1142,10 @@ case "$1" in
         ;;
     here)
         here "${@:2}"
+        exit 0
+        ;;
+    all)
+        all_cmd "${@:2}"
         exit 0
         ;;
     add)
