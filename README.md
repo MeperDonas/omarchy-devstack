@@ -113,6 +113,29 @@ DEVDATA_CONFIG="$PWD/config" DEVDATA_PROJECT=demo bin/devstack demo up
 
 `config/demo.json` is a single `python3 -m http.server` on `:8080`.
 
+## Point it at any repo
+
+You do not have to write the JSON by hand: the CLI works the stack out and
+**proposes** it (read-only — it never executes the project, never elevates, and
+never copies `.env` secrets, only ports and local URLs).
+
+```bash
+devstack scan ~/Projects/my-app     # proposal + the evidence for every guess
+devstack add  ~/Projects/my-app     # writes ~/.config/devstack/my-app.json
+```
+
+| Signal | What it infers |
+|---|---|
+| compose files | one docker service per file: engine, container name, published port |
+| `package.json` | Node: Next, Nuxt, SvelteKit, Astro, Vite, CRA, Nest, Express/Fastify/Hono — with the framework's own dev command and port |
+| other manifests | Python (FastAPI/uvicorn, Django, Flask), Go, Rust (incl. `trunk`), PHP/Laravel, Ruby/Rails |
+| `.env` | its own `PORT`/`APP_URL`, and the backend port the frontend points at (`NEXT_PUBLIC_API_URL`) |
+| source | Nest's `setGlobalPrefix('api')` → `/api/health`; Prisma → seed/migrate/studio tasks |
+| `AGENTS.md`, `CLAUDE.md`, `README.md`, `.claude/`, `.codex/`, `.opencode/`, `.pi/`, `herdr*` | the commands the repo already documents — the most reliable source in repos that are worked on inside a coding agent |
+
+`scan` prints the reasoning line by line; `add` refuses to overwrite an existing
+project and refuses to declare the same directory twice under another name.
+
 ## Configure a stack
 
 `~/.config/devstack/<name>.json`:
@@ -256,6 +279,11 @@ se actualiza con `omarchy plugin update` y se configura desde los ajustes de
 Omarchy. Para probarlo sin docker ni node: `DEVDATA_CONFIG="$PWD/config"
 DEVDATA_PROJECT=demo bin/devstack demo up` (levanta un `python3 -m http.server`).
 Desinstalar: `./uninstall.sh`.
+
+**Detectar en vez de escribir.** `devstack scan <dir>` propone el stack de
+cualquier repo (compose, `package.json`, `.env`, código, y los comandos que
+documenta su `AGENTS.md`/`CLAUDE.md`) y `devstack add <dir>` lo declara. Sólo
+lee: no ejecuta el proyecto, no eleva permisos y no copia secretos del `.env`.
 
 **Configurar.** Un JSON por proyecto en `~/.config/devstack/<nombre>.json`
 (nombre, directorio y `services` con `id`, `label`, `type` (`process`/`docker`),

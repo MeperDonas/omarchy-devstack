@@ -124,6 +124,13 @@ run mkdir -p "$BIN_DIR" "$DEVDATA_DIR"
 run install -m 755 "$REPO/bin/devstack" "$BIN_DIR/devstack"
 ok "CLI → $BIN_DIR/devstack"
 
+# La detección (scan/add) vive en lib/; se copia junto al CLI para que también
+# funcione si alguien lo instaló fuera del repo.
+LIB_DIR="${XDG_DATA_HOME:-$HOME_DIR/.local/share}/devstack/lib"
+run mkdir -p "$LIB_DIR"
+run install -m 644 "$REPO/lib/scan.sh" "$LIB_DIR/scan.sh"
+ok "detector → $LIB_DIR/scan.sh"
+
 # ---------------------------------------------------------------- configs
 
 for c in "${CONFIGS[@]:-}"; do

@@ -1,0 +1,1 @@
+{ "name": "api-simple", "scripts": { "start": "node server.js" }, "dependencies": { "express": "^4.19.0" } }

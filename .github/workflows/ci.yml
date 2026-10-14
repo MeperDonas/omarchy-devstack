@@ -38,6 +38,9 @@ jobs:
       - name: Config files are valid JSON
         run: for f in config/*.json; do jq -e . "$f" >/dev/null || exit 1; done
 
+      - name: Detector fixtures
+        run: ./test/scan_test.sh
+
   smoke:
     runs-on: ubuntu-24.04
     steps:

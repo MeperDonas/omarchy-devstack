@@ -9,7 +9,9 @@ sudo by itself.
 
 | Path | What it is |
 |---|---|
-| `bin/devstack` | the CLI. All logic lives here: service order, waits, health checks, pidfiles, docker elevation, notifications, `--force` take-over, `menu` block generation |
+| `bin/devstack` | the CLI (orchestration layer): service order, waits, health checks, pidfiles, docker elevation, notifications, `--force` take-over, `menu` block generation |
+| `lib/scan.sh` | the detection layer: reads a repo and **proposes** a stack. Read-only by contract — it never runs the project, never elevates, and never copies `.env` values (only ports and local URLs) |
+| `test/fixtures/` + `test/scan_test.sh` | toy repos reproducing the shapes we support (two-package, single app at the root, nothing recognisable, agent-documented commands) and the assertions on what the detector must infer |
 | `Panel.qml` | the bar widget (an Omarchy `bar-widget` plugin). Reads `devstack json`, renders the four-colour state, one chip per service and the action buttons |
 | `manifest.json` | the plugin manifest: id, entry point, and the settings schema (project, command, intervals, colours) |
 | `install.sh` / `uninstall.sh` | plugin lifecycle + CLI + config + Omarchy menu block |
@@ -45,6 +47,21 @@ services in start order:
   opening the browser. `open: true` marks the service the browser button opens.
 - `tasks[]` are extra commands (`seed`, `migrate`, …) with `needs: ["db"]` to
   lift dependencies first.
+
+## Adding a framework or a signal
+
+1. Add the branch to `scan_node_package()` (or `scan_other_project()`) in
+   `lib/scan.sh`: the dependency that identifies it, its dev command, its default
+   port, its health path, and its tasks.
+2. Add (or extend) a fixture under `test/fixtures/` that looks like a real repo of
+   that shape — including the `.env` and the compose file if the guess depends on
+   them.
+3. Add the `check`/`check_raw` lines to `test/scan_test.sh`. CI runs them, and a
+   detector that guesses wrong is a bug: prefer "no reconocí" over inventing a
+   service.
+
+The detector must stay read-only. If a signal needs to execute the target repo to
+be read, it does not belong here.
 
 ## Testing the widget
 

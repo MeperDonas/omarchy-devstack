@@ -38,6 +38,14 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 USER_CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/devstack"
 BUNDLED_CONFIG_DIR="$SCRIPT_DIR/../config"
+# Capa de detección (lib/scan.sh). Vive junto al CLI en el repo/plugin; si el
+# CLI se copió suelto a ~/.local/bin, install.sh la deja en ~/.local/share/devstack.
+SCAN_LIB=""
+for cand in "$SCRIPT_DIR/../lib/scan.sh" "$SCRIPT_DIR/lib/scan.sh" \
+    "${XDG_DATA_HOME:-$HOME/.local/share}/devstack/lib/scan.sh" "$HOME/.local/lib/devstack/scan.sh"; do
+    [[ -r $cand ]] && { SCAN_LIB=$cand; break; }
+done
+
 CONFIG_DIRS=()
 [[ -n ${DEVDATA_CONFIG:-} ]] && CONFIG_DIRS+=("$DEVDATA_CONFIG")
 CONFIG_DIRS+=("$USER_CONFIG_DIR")
@@ -760,6 +768,107 @@ list_all() {
     done < <(jq -r '.tasks[]? | "\(.id)\t\(.label // "")\t\(.cmd)"' "$CONFIG_FILE")
 }
 
+# --- detección (scan/add) ---------------------------------------------------
+require_scan() {
+    [[ -n $SCAN_LIB ]] || die "scan/add necesitan lib/scan.sh: usá el CLI que viene dentro del plugin (o instalá con ./install.sh)"
+    [[ -n ${SCAN_LOADED:-} ]] && return 0
+    # shellcheck source=/dev/null
+    source "$SCAN_LIB"
+    SCAN_LOADED=1
+    command -v jq >/dev/null || die "scan/add necesitan jq"
+}
+
+# devstack scan [dir] [--json]
+scan_cmd() {
+    local dir="." opt=""
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            --json) opt=--json ;;
+            -*) die "scan: opción desconocida $1" ;;
+            *) dir=$1 ;;
+        esac
+        shift
+    done
+    [[ -d $dir ]] || die "No existe el directorio: $dir"
+    require_scan
+    local root out json
+    root=$(cd "$dir" && pwd)
+    out=$(scan_project_json "$root" "") || die "No pude analizar $root"
+    json=$(printf '%s\n' "$out" | grep -v '^#')
+    if [[ $opt == --json ]]; then
+        printf '%s\n' "$json"
+        return 0
+    fi
+    printf '%s — %s\n' "$(printf '%s' "$json" | jq -r .name)" "$(printf '%s' "$json" | jq -r .dir)"
+    if [[ $(printf '%s' "$json" | jq '.services | length') -eq 0 ]]; then
+        warn "No reconocí ningún stack en ese directorio"
+    else
+        printf '  servicios propuestos:\n'
+        printf '%s' "$json" | jq -r '.services[] | "    \(.id)\t\(.type)\t\(.dir // "")\t\(.cmd // .compose)\t:\(.port)\t\(.health // "")"' | column -t -s$'\t' | sed 's/^/  /'
+    fi
+    if [[ $(printf '%s' "$json" | jq '.tasks | length // 0') -gt 0 ]]; then
+        printf '  tareas:\n'
+        printf '%s' "$json" | jq -r '.tasks[] | "    \(.id)\t\(.cmd)"' | column -t -s$'\t' | sed 's/^/  /'
+    fi
+    printf '%s\n' "$out" | sed -n 's/^#\( evidencias\| comandos.*\)$/  \1/p'
+    printf '%s\n' "$out" | sed -n '/^#   /s/^#   /    /p'
+    printf '  → para declararlo:  devstack add %s\n' "$dir"
+}
+
+# devstack add [dir] [--name NOMBRE] [--force]
+add_cmd() {
+    local dir="." name="" force=""
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            --force) force=1 ;;
+            --name=*) name=${1#--name=} ;;
+            --name)
+                name="${2:-}"
+                shift
+                ;;
+            -*) die "add: opción desconocida $1" ;;
+            *) dir=$1 ;;
+        esac
+        shift
+    done
+    [[ -d $dir ]] || die "No existe el directorio: $dir"
+    require_scan
+    local root json
+    root=$(cd "$dir" && pwd)
+    if [[ -z $name ]]; then
+        # sin el \n final: tr -c lo convertía en un guión al final del nombre
+        name=$(printf '%s' "$(basename "$root")" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9._-' '-' | sed -e 's/^-\{1,\}//' -e 's/-\{1,\}$//')
+    fi
+    [[ $name =~ ^[a-zA-Z0-9._-]+$ ]] || die "Nombre inválido: $name"
+    json=$(scan_project_json "$root" "" | grep -v '^#') || die "No pude analizar $root"
+    [[ $(printf '%s' "$json" | jq '.services | length') -gt 0 ]] ||
+        die "No reconocí ningún stack en $root (probá 'devstack init $name' y editarlo a mano)"
+    mkdir -p "$USER_CONFIG_DIR"
+    local target="$USER_CONFIG_DIR/$name.json"
+    if [[ -e $target && -z $force ]]; then
+        die "Ya existe $target (usá --force para pisarlo)"
+    fi
+    # ¿ese mismo directorio ya está declarado con otro nombre? Es el error fácil
+    # (declarar dos veces el mismo repo porque el nombre no coincidía).
+    local f existing="" cfg_dir
+    for f in "$USER_CONFIG_DIR"/*.json; do
+        [[ -r $f ]] || continue
+        cfg_dir=$(jq -r '.dir // empty' "$f" 2>/dev/null)
+        cfg_dir="${cfg_dir/#\~/$HOME}"
+        if [[ -n $cfg_dir && $cfg_dir == "$root" ]]; then
+            existing=$(basename "$f" .json)
+            break
+        fi
+    done
+    if [[ -n $existing && $existing != "$name" && -z $force ]]; then
+        die "Ese directorio ya está declarado como '$existing' ($USER_CONFIG_DIR/$existing.json); usá --force si querés otro nombre"
+    fi
+    printf '%s\n' "$json" | jq . >"$target"
+    ok "Proyecto $name declarado en $target"
+    printf '%s' "$json" | jq -r '.services[] | "    \(.id)  \(.cmd // .compose)  :\(.port)"'
+    printf '  revisalo y después:  devstack %s up\n' "$name"
+}
+
 # Crea un proyecto nuevo a partir del ejemplo que viaja con el plugin.
 init_project() {
     local name=$1 target example
@@ -834,6 +943,14 @@ case "$1" in
         ;;
     init)
         init_project "${2:-}"
+        exit 0
+        ;;
+    scan)
+        scan_cmd "${@:2}"
+        exit 0
+        ;;
+    add)
+        add_cmd "${@:2}"
         exit 0
         ;;
 esac
