@@ -160,6 +160,46 @@ to the `project` setting; `mode: fixed` pins one project like before.
 Path resolution only looks at *your* projects (`~/.config/devstack`): the examples
 that ship with the plugin are for trying things out, not for deciding where you are.
 
+### Every project at a glance
+
+```bash
+devstack all status     # one line per project: up/total plus a per-service state
+devstack all json       # the same, machine-readable (what mode: all reads)
+devstack all up         # lift what is missing, project by project
+devstack all down       # stop everything
+```
+
+`mode: all` in the widget turns the icon into an aggregate — the glyph plus `N/M`
+— and the popup into one row per project with **Levantar lo que falta** and
+**Bajar todo**. Only projects *you* declared count; the examples shipped with the
+plugin stay out.
+
+### Let your coding agents drive the stacks (MCP)
+
+`bin/devstack-mcp` is an MCP server over stdio (bash + jq, no dependencies)
+exposing `devstack_list`, `devstack_status`, `devstack_here`, `devstack_scan`,
+`devstack_declare`, `devstack_up`, `devstack_down` and `devstack_logs`: an agent
+can see your stacks, start what is missing, diagnose a failure from the logs and
+stop things again, with the same guarantees as the CLI (nothing it did not start
+gets touched). `devstack_up` starts detached and returns immediately — the agent
+follows with `devstack_status`.
+
+```jsonc
+// Claude Code — or: claude mcp add devstack -- /home/USER/.local/bin/devstack-mcp
+// ~/.claude.json (or a project .mcp.json)
+{ "mcpServers": { "devstack": { "type": "stdio", "command": "/home/USER/.local/bin/devstack-mcp" } } }
+
+// opencode — ~/.config/opencode/opencode.json, next to your other MCP entries
+{ "mcp": { "devstack": { "type": "local", "command": ["/home/USER/.local/bin/devstack-mcp"], "enabled": true } } }
+
+// codex — ~/.codex/config.toml
+[mcp_servers.devstack]
+command = "/home/USER/.local/bin/devstack-mcp"
+```
+
+Any client that speaks MCP over stdio works the same way: the command is
+`devstack-mcp` (omp, pi, herdr, … included).
+
 ## Configure a stack
 
 `~/.config/devstack/<name>.json`:
@@ -303,6 +343,17 @@ se actualiza con `omarchy plugin update` y se configura desde los ajustes de
 Omarchy. Para probarlo sin docker ni node: `DEVDATA_CONFIG="$PWD/config"
 DEVDATA_PROJECT=demo bin/devstack demo up` (levanta un `python3 -m http.server`).
 Desinstalar: `./uninstall.sh`.
+
+**Todos a la vista.** `devstack all status|json|up|down` resume tus proyectos
+(arriba/total por proyecto) y con `mode: all` el icono de la barra muestra el
+glifo + `N/M` y el popup una fila por proyecto con *Levantar lo que falta* y
+*Bajar todo*.
+
+**Para los agentes (MCP).** `devstack-mcp` es un servidor MCP por stdio (bash +
+jq) con `list/status/here/scan/declare/up/down/logs`: omp, opencode, claude,
+codex, pi o herdr pueden mirar y manejar tus stacks solos. Se registra con el
+comando `/home/USER/.local/bin/devstack-mcp` (mirá los ejemplos del README en
+inglés para Claude Code, opencode y codex).
 
 **Seguir tu sesión (modo auto).** Por defecto el widget muestra el stack de la
 **terminal que estás mirando**: `devstack here json --window` resuelve la carpeta
