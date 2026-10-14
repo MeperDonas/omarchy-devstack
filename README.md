@@ -255,6 +255,16 @@ your command or a framework that reads `PORT` just works. For a docker service t
 host port comes from its compose, so `port` refuses and says so. The popup shows a
 **Mover el puerto :3000** button whenever there is a clash.
 
+If a service dies because its dependencies are missing (`next: command not found`,
+`vite: command not found`), devstack now says so (`[aviso] Parece que faltan
+dependencias en … probá 'npm install'`) instead of leaving you with just the log.
+
+Every `up`/`down`/`restart` leaves its outcome in the project's runtime dir, exposed
+as `lastResult` in `devstack <p> json`, so the widget stops saying *Levantando…* as
+soon as the CLI finishes — and says *Falló: …* when it failed. `Bajar` stays clickable
+while starting (that is the way out of a stuck lift), and a service that answers
+nothing is flagged in the state.
+
 A service that is listening but never answers the health check is reported as
 `Servicio sin responder` and the "lifting" state is dropped there: without that,
 an action that can never finish would keep the 2-second polling and the progress

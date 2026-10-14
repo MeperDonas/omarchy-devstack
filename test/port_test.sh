@@ -16,6 +16,9 @@ printf '{"name":"p","dir":"%s/p","services":[{"id":"web","label":"web","type":"p
     "$tmp" >"$tmp/xdg/devstack/p.json"
 printf '{"name":"otro","dir":"%s/otro","services":[{"id":"x","label":"x","type":"process","dir":"","cmd":"sleep 1","port":4401,"health":""}]}\n' \
     "$tmp" >"$tmp/xdg/devstack/otro.json"
+# proyecto con dos servicios: --auto no puede elegir el puerto del otro servicio
+printf '{"name":"gemelo","dir":"%s/p","services":[{"id":"api","label":"api","type":"process","dir":"","cmd":"sleep 1","port":4402,"health":""},{"id":"web","label":"web","type":"process","dir":"","cmd":"sleep 1","port":4403,"health":""}]}\n' \
+    "$tmp" >"$tmp/xdg/devstack/gemelo.json"
 
 export XDG_CONFIG_HOME="$tmp/xdg"
 CFG="$tmp/xdg/devstack/p.json"
@@ -29,6 +32,21 @@ bad() {
 }
 
 printf 'port (variar el puerto de un servicio)\n'
+
+# El bug que rompió una config real: --auto elegía el puerto del backend del
+# MISMO proyecto para el frontend.
+"$DEVSTACK" gemelo port --auto web >/dev/null 2>&1
+[[ $(jq -r '.services[] | select(.id=="web") | .port' "$tmp/xdg/devstack/gemelo.json") != 4402 ]] \
+    && ok "--auto no elige el puerto de otro servicio del mismo proyecto" \
+    || bad "--auto no elige el puerto de otro servicio del mismo proyecto"
+"$DEVSTACK" gemelo port --to 4402 api >/dev/null 2>&1 && bad "mismo proyecto: no se pisa" || ok "mismo proyecto: no se pisa"
+
+# Dos servicios del mismo proyecto con el mismo puerto: se avisa.
+printf '{"name":"dup","dir":"%s/p","services":[{"id":"a","label":"a","type":"process","dir":"","cmd":"sleep 1","port":4404,"health":""},{"id":"b","label":"b","type":"process","dir":"","cmd":"sleep 1","port":4404,"health":""}]}\n' \
+    "$tmp" >"$tmp/xdg/devstack/dup.json"
+"$DEVSTACK" all status 2>&1 | grep -q ":4404" && ok "avisa puertos repetidos dentro de un proyecto" \
+    || bad "avisa puertos repetidos dentro de un proyecto"
+rm -f "$tmp/xdg/devstack/dup.json"
 
 "$DEVSTACK" p port --dry-run web >/dev/null 2>&1
 [[ $(port_of web) == 4400 ]] && ok "--dry-run no toca el config" || bad "--dry-run no toca el config"
@@ -64,6 +82,14 @@ sleep 1
     printf '       out: %s\n' "$(cat "$tmp/p/out.txt" 2>/dev/null)" >&2
 }
 "$DEVSTACK" p down >/dev/null 2>&1 || true
+
+# El resultado de la acción queda en el json (el widget lo usa para no quedarse
+# "levantando" cuando el CLI ya terminó).
+jq '(.services[] | select(.id == "web")) |= (.cmd = "exit 1" | .wait = 2)' "$CFG" >"$CFG.new" && mv "$CFG.new" "$CFG"
+"$DEVSTACK" p up web >/dev/null 2>&1 || true
+"$DEVSTACK" p json | jq -e '.lastResult.ok == false and (.lastResult.detail | length > 0)' >/dev/null \
+    && ok "json trae el resultado de la acción (para no quedarse levantando)" \
+    || bad "json trae el resultado de la acción"
 
 if ((fail)); then
     printf '\033[1;31mport: hay fallos\033[0m\n' >&2

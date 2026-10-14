@@ -73,6 +73,10 @@ Panel {
   property string openService: ""
   property string pending: ""
   property int pendingSeconds: 0
+  // Cuándo empezó la acción y qué dijo el CLI si falló: con eso el widget sabe
+  // que una acción terminó, en vez de mostrar "levantando" hasta el timeout.
+  property real pendingAt: 0
+  property string failure: ""
   property int stuckPolls: 0
 
   // El proyecto de las ACCIONES: el que el CLI resolvió (foco, ajuste o casa) o,
@@ -166,7 +170,9 @@ Panel {
     : noProject ? (root.showRows ? "Sin proyecto · elegí uno abajo" : "Sin proyecto")
     : undeclared ? "Sin declarar · " + name
     : !loaded ? "Sin datos"
-    : pending === "up" ? (pendingSeconds >= pendingTimeout ? "No terminó de levantar" : "Levantando… " + pendingSeconds + "s")
+    : failure !== "" ? "Falló: " + failure
+    : pending === "up" ? (pendingSeconds >= pendingTimeout ? "No terminó de levantar"
+        : "Levantando… " + pendingSeconds + "s" + (stuck ? " · un servicio no responde" : ""))
     : pending === "down" ? "Bajando… " + pendingSeconds + "s"
     : stuck && pending === "" ? "Servicio sin responder"
     : allUp ? (services.every(function (s) { return s.health === "" || s.healthy }) ? "Arriba" : "Arriba · compilando")
@@ -208,6 +214,8 @@ Panel {
   function startPending(what) {
     root.pending = what
     root.pendingSeconds = 0
+    root.pendingAt = Date.now() / 1000
+    root.failure = ""
   }
   function runCommand(command) {
     // El popup se cierra: la barra queda visible y el resultado llega por
@@ -268,6 +276,15 @@ Panel {
         root.declared = true
         if (root.pending === "up" && root.everythingUp) root.pending = ""
         if (root.pending !== "" && root.pendingSeconds >= root.pendingTimeout) root.pending = ""
+      // El CLI deja su resultado al terminar (result.json): si la acción ya
+      // acabó, se acabó el "levantando" — y si falló, se dice por qué.
+      var lr = data.lastResult
+      if (root.pending !== "" && lr && (lr.action === root.pending
+          || (root.pending === "up" && lr.action === "restart"))
+          && (lr.at || 0) + 2 >= root.pendingAt) {
+        if (lr.ok === false) root.failure = lr.detail || "la última acción falló"
+        root.pending = ""
+      }
         return
       }
       root.declared = data.declared !== false
@@ -284,6 +301,11 @@ Panel {
       }
       // `fallback` lo informa el propio CLI cuando usó el respaldo del ajuste.
       root.fallbackUsed = data.fallback === true
+      if (root.failure !== "" && root.pending === "") {
+        // el aviso de error dura hasta la próxima acción o hasta que el estado
+        // cambie solo (se limpia cuando ya no hay nada que reclamar)
+        if (root.allUp) root.failure = ""
+      }
       var sig = JSON.stringify([data.name, data.project, data.repo, data.open, data.services])
       if (sig !== root.appliedSignature) {
         root.appliedSignature = sig
@@ -684,7 +706,7 @@ Panel {
             ActionButton {
               compact: true
               icon: modelData.up > 0 ? "󰍃" : "󰐊"
-              enabled: !root.starting
+              enabled: true
               onTriggered: root.runCommand(cli + " " + modelData.project + " " + (modelData.up > 0 ? "down" : "up"))
             }
             }
@@ -872,14 +894,16 @@ Panel {
         spacing: 8
         visible: root.declared && !root.allMode
         ActionButton { label: "Levantar"; icon: "󰐊"; enabled: !root.allUp && !root.starting; onTriggered: root.run("up") }
-        ActionButton { label: "Bajar"; icon: "󰍃"; enabled: root.anyUp && !root.starting; onTriggered: root.run("down") }
+        // Bajar queda habilitado incluso mientras levanta: es la salida cuando
+        // una acción se cuelga (y "Cancelar" no existe en el CLI).
+        ActionButton { label: "Bajar"; icon: "󰍃"; enabled: root.anyUp; onTriggered: root.run("down") }
       }
 
       Row {
         anchors.horizontalCenter: parent.horizontalCenter
         visible: root.declared && !root.allMode
         spacing: 8
-        ActionButton { label: "Abrir"; icon: "󰖟"; enabled: root.openSvc !== undefined && root.openSvc.up && !root.starting; onTriggered: root.run("open") }
+        ActionButton { label: "Abrir"; icon: "󰖟"; enabled: root.openSvc !== undefined && root.openSvc.up; onTriggered: root.run("open") }
         ActionButton { label: "Logs"; icon: "󱆃"; enabled: root.openService !== ""; onTriggered: root.runInTerminal(cli + projectArg + " logs " + root.openService) }
       }
 
