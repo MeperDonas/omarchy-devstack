@@ -33,7 +33,14 @@
 set -euo pipefail
 
 CONFIG_DIR="${DEVDATA_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/devstack}"
-RUNTIME_BASE="${XDG_RUNTIME_DIR:-/tmp}/devstack-$(id -u)"
+# Estado por usuario: bajo XDG_RUNTIME_DIR cuando existe; si no, un directorio
+# propio con el uid (una ruta predecible y compartida en /tmp es lo que el
+# baseline de seguridad del marketplace marca).
+if [[ -n ${XDG_RUNTIME_DIR:-} ]]; then
+    RUNTIME_BASE="$XDG_RUNTIME_DIR/devstack"
+else
+    RUNTIME_BASE="/tmp/devstack-$(id -u)"
+fi
 DEFAULT_PROJECT="${DEVDATA_PROJECT:-}"
 WAIT_SCALE="${DEVDATA_WAIT_SCALE:-1}"
 CURRENT=""
