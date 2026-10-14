@@ -41,6 +41,9 @@ jobs:
       - name: Variable ports (`devstack port`)
         run: ./test/port_test.sh
 
+      - name: Widget shell safety
+        run: ./test/panel_shell_safety_test.sh
+
       - name: All projects (`devstack all`)
         run: ./test/all_test.sh
 

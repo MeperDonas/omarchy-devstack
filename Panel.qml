@@ -95,7 +95,7 @@ Panel {
   // si todavía no resolvió nada, el del ajuste. Con `project` fijo acá, los
   // botones actuaban sobre ese proyecto aunque el popup mostrara otro.
   readonly property string effectiveProject: resolvedProject !== "" ? resolvedProject : projectName
-  readonly property string projectArg: effectiveProject !== "" ? " " + effectiveProject : ""
+  readonly property string projectArg: effectiveProject !== "" ? " " + shq(effectiveProject) : ""
 
   readonly property bool starting: pending !== ""
   readonly property bool allMode: mode === "all"
@@ -229,6 +229,14 @@ Panel {
     root.pendingAt = Date.now() / 1000
     root.failure = ""
   }
+  // Cita para el shell: '…' con los ' internos como '\''. Todo valor que venga de
+  // afuera (rutas detectadas, nombres de proyecto, ids de servicio) pasa por acá
+  // antes de entrar en un comando: un nombre de carpeta con $(…) o ; no puede
+  // ejecutar nada.
+  function shq(value) {
+    return "'" + String(value).replace(/'/g, "'\\''") + "'"
+  }
+
   function runCommand(command) {
     if (root.closeAfterAction) close()
     refreshTimer.restart()
@@ -242,7 +250,11 @@ Panel {
   function runInTerminal(command) {
     if (root.closeAfterAction) close()
     refreshTimer.restart()
-    bar.run("omarchy-launch-terminal bash -lc '" + "DEVDATA_NOTIFY=" + root.notifyMode + " " + command + " || read -r'")
+    // El comando entero va citado: así el shell que lanza el terminal lo recibe
+    // tal cual y lo único que se parsea una segunda vez es lo que ya viene
+    // citado adentro.
+    bar.run("omarchy-launch-terminal bash -lc "
+      + shq("DEVDATA_NOTIFY=" + root.notifyMode + " " + command + " || read -r"))
   }
   function run(argument) {
     if (argument === "down") startPending("down")
@@ -457,14 +469,15 @@ Panel {
     if (candidate.declared) {
       root.searching = false
       root.pinProject(candidate.project)
-      root.runCommand(cli + " " + candidate.project + " " + (candidate.up > 0 ? "down" : "up"))
+      root.runCommand(cli + " " + shq(candidate.project) + " " + (candidate.up > 0 ? "down" : "up"))
       return
     }
     // La lista que estás mirando ya no vale: ese candidato dejó de estar sin
     // declarar (y si el detector no lo pudo declarar, la próxima búsqueda lo
     // vuelve a mostrar tal cual).
     refindTimer.restart()
-    root.runInTerminal(cli + " add \"" + candidate.dir + "\" --name " + candidate.suggested + " && " + cli + " " + candidate.suggested + " up")
+    root.runInTerminal(cli + " add " + shq(candidate.dir) + " --name " + shq(candidate.suggested)
+      + " && " + cli + " " + shq(candidate.suggested) + " up")
   }
 
   onOpenedChanged: if (opened) { refresh(); refreshList() }
@@ -755,7 +768,7 @@ Panel {
               enabled: !root.isStarting(modelData.project)
               onTriggered: {
                 if (modelData.up === 0) root.markStarting(modelData.project)
-                root.runCommand(cli + " " + modelData.project + " " + (modelData.up > 0 ? "down" : "up"))
+                root.runCommand(cli + " " + shq(modelData.project) + " " + (modelData.up > 0 ? "down" : "up"))
               }
             }
             }
@@ -956,7 +969,7 @@ Panel {
         visible: root.declared && !root.allMode && !root.searching
         spacing: 8
         ActionButton { label: "Abrir"; icon: "󰖟"; enabled: root.openSvc !== undefined && root.openSvc.up; onTriggered: root.run("open") }
-        ActionButton { label: "Logs"; icon: "󱆃"; enabled: root.openService !== ""; onTriggered: root.runInTerminal(cli + projectArg + " logs " + root.openService) }
+        ActionButton { label: "Logs"; icon: "󱆃"; enabled: root.openService !== ""; onTriggered: root.runInTerminal(cli + projectArg + " logs " + shq(root.openService)) }
       }
 
       Row {
@@ -964,7 +977,7 @@ Panel {
         visible: root.declared && !root.allMode && !root.searching
         spacing: 8
         ActionButton { label: "Reiniciar"; icon: "󰜉"; enabled: root.anyUp && !root.starting; onTriggered: root.run("restart") }
-        ActionButton { label: "Menú"; icon: "󰒓"; enabled: true; onTriggered: root.runCommand("omarchy menu summon " + (root.effectiveProject !== "" ? "dev." + root.effectiveProject : "dev")) }
+        ActionButton { label: "Menú"; icon: "󰒓"; enabled: true; onTriggered: root.runCommand("omarchy menu summon " + shq(root.effectiveProject !== "" ? "dev." + root.effectiveProject : "dev")) }
       }
 
       // Repo reconocido pero sin declarar: se declara con el detector, en una
@@ -976,7 +989,7 @@ Panel {
         label: "Declarar este stack"
         icon: "󰐊"
         enabled: !root.starting
-        onTriggered: root.runInTerminal(cli + " add " + repo + (suggested !== "" ? " --name " + suggested : ""))
+        onTriggered: root.runInTerminal(cli + " add " + shq(root.repo) + (root.suggested !== "" ? " --name " + shq(root.suggested) : ""))
       }
 
       ActionButton {
