@@ -486,7 +486,7 @@ Panel {
             }
             Text {
               text: modelData.name
-              width: parent.width - 70
+              width: parent.width - 100
               elide: Text.ElideRight
               color: bar ? bar.foreground : "white"
               font.family: bar ? bar.fontFamily : "monospace"
@@ -499,6 +499,14 @@ Panel {
               font.family: bar ? bar.fontFamily : "monospace"
               font.pixelSize: 10
               anchors.verticalCenter: parent.verticalCenter
+            }
+            // Un click por proyecto: levanta el que está abajo, baja el que está
+            // arriba (el icono dice cuál va a hacer).
+            ActionButton {
+              compact: true
+              icon: modelData.up > 0 ? "󰍃" : "󰐊"
+              enabled: !root.starting
+              onTriggered: root.runCommand(cli + " " + modelData.project + " " + (modelData.up > 0 ? "down" : "up"))
             }
           }
         }
@@ -625,9 +633,10 @@ Panel {
     property string icon: ""
     property bool enabled: true
     property bool wide: false
+    property bool compact: false
     signal triggered()
-    width: wide ? 240 : 116
-    height: 54
+    width: compact ? 26 : (wide ? 240 : 116)
+    height: compact ? 22 : 54
     radius: 2
     color: enabled ? (buttonMouse.containsMouse ? Qt.rgba(1, 1, 1, 0.18) : Qt.rgba(1, 1, 1, 0.10)) : Qt.rgba(1, 1, 1, 0.04)
     border.color: enabled ? Qt.rgba(1, 1, 1, 0.28) : Qt.rgba(1, 1, 1, 0.10)
@@ -638,14 +647,15 @@ Panel {
       anchors.centerIn: parent
       spacing: 2
       Text {
-        width: buttonRoot.width - 12
+        width: buttonRoot.compact ? buttonRoot.width : buttonRoot.width - 12
         horizontalAlignment: Text.AlignHCenter
         text: buttonRoot.icon
         color: bar ? bar.foreground : "white"
         font.family: bar ? bar.fontFamily : "monospace"
-        font.pixelSize: 17
+        font.pixelSize: buttonRoot.compact ? 13 : 17
       }
       Text {
+        visible: !buttonRoot.compact
         width: buttonRoot.width - 12
         horizontalAlignment: Text.AlignHCenter
         text: buttonRoot.label
