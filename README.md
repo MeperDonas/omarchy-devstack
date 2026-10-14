@@ -163,6 +163,33 @@ state never blinks; `mode: fixed` pins one project like before.
 Path resolution only looks at *your* projects (`~/.config/devstack`): the examples
 that ship with the plugin are for trying things out, not for deciding where you are.
 
+### When the detection gets it wrong (or you just want to decide)
+
+Resolution is a short chain and every step is a manual override:
+
+1. **the terminal you are looking at** — `mode: auto`, `devstack here json --window`;
+2. **the `project` setting** of the widget, which travels as `--fallback <project>`;
+3. **the project of the house** — `devstack use <project>`. That is just the file
+   `~/.config/devstack/default`, which plain `devstack json` also reads when you
+   have several projects and pass no name;
+4. nothing — the widget says *Sin proyecto · elegí uno abajo* and lists your projects
+   so you can pick one.
+
+You never have to leave the bar: **click a row** in the popup to pin that project (the
+widget stops following the terminal) and **Seguir el foco** to go back. The pin is
+stored with `devstack use`, so it survives a shell restart and the CLI agrees with
+what the bar shows:
+
+```bash
+devstack use            # which project is the house project
+devstack use meperpos   # make it this one
+devstack use --clear    # forget it: back to the focused terminal
+```
+
+For something permanent, use `mode: fixed` plus `project` in the widget entry, or
+point the whole widget at any CLI invocation with the `command` setting
+(`command: "DEVDATA_CONFIG=/tmp/lab devstack"`).
+
 ### Every project at a glance
 
 ```bash
@@ -356,6 +383,18 @@ se actualiza con `omarchy plugin update` y se configura desde los ajustes de
 Omarchy. Para probarlo sin docker ni node: `DEVDATA_CONFIG="$PWD/config"
 DEVDATA_PROJECT=demo bin/devstack demo up` (levanta un `python3 -m http.server`).
 Desinstalar: `./uninstall.sh`.
+
+**Guiarlo a mano.** La resolución es una cadena corta y cada paso se puede forzar:
+la **terminal que mirás** (`mode: auto`), el ajuste **`project`** del widget (viaja
+como `--fallback`), el **proyecto de casa** (`devstack use <p>`, o sea el archivo
+`~/.config/devstack/default`, que también usa `devstack json` cuando hay varios
+proyectos y no pasás nombre) y, si no hay nada, el widget dice *Sin proyecto · elegí
+uno abajo* y lista tus proyectos. Sin salir de la barra: **un click en un renglón**
+fija ese proyecto y **Seguir el foco** vuelve; el pin se guarda con `devstack use`,
+así sobrevive al reinicio del shell y el CLI queda de acuerdo con la barra
+(`devstack use`, `devstack use meperpos`, `devstack use --clear`). Para algo
+permanente: `mode: fixed` + `project` en la entrada del widget, o apuntá el widget
+entero a cualquier invocación del CLI con el ajuste `command`.
 
 **Todos a la vista.** `devstack all status|json|up|down` resume tus proyectos
 (arriba/total por proyecto) y con `mode: all` el icono de la barra muestra el

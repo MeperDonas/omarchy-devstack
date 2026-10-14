@@ -46,6 +46,25 @@ expect_args "--fallback inexistente no inventa nada: sigue el estado neutro" \
 expect_args "--fallback no pisa la resolución normal" \
     '.declared == true and .project == "myapp" and (.fallback // false) == false' "$tmp/proj" --fallback other
 
+# --- proyecto de casa (`devstack use`) como último recurso -------------------
+mkdir -p "$tmp/proj2"
+printf '{"name":"Otro","dir":"%s/proj2","services":[{"id":"api","label":"api","type":"process","dir":"","cmd":"sleep 1","port":9,"health":""}]}\n' \
+    "$tmp" >"$tmp/xdg/devstack/otro.json"
+
+printf 'myapp\n' >"$tmp/xdg/devstack/default"
+expect_args "--default usa el proyecto de casa si el foco no resuelve" \
+    '.declared == true and .fallback == true and .project == "myapp"' "$tmp/plain" --default
+expect_args "sin --default el archivo del proyecto de casa no se usa" \
+    '.declared == false' "$tmp/plain"
+expect_args "el foco manda sobre --default" \
+    '.declared == true and .project == "otro"' "$tmp/proj2" --default
+expect_args "el respaldo del ajuste manda sobre --default" \
+    '.declared == true and .project == "otro"' "$tmp/plain" --default --fallback otro
+printf 'borrado\n' >"$tmp/xdg/devstack/default"
+expect_args "--default con proyecto borrado no inventa nada" \
+    '.declared == false' "$tmp/plain" --default
+rm -f "$tmp/xdg/devstack/default" "$tmp/xdg/devstack/otro.json"
+
 printf 'here (resolver el proyecto de una ruta)\n'
 expect "dentro de un proyecto declarado" '.declared == true and .project == "myapp"' "$tmp/proj"
 expect "dentro de una subcarpeta del proyecto" '.declared == true and .project == "myapp"' "$tmp/proj/sub"

@@ -47,6 +47,9 @@ jobs:
       - name: MCP server
         run: ./test/mcp_test.sh
 
+      - name: Home project (`devstack use`)
+        run: ./test/use_test.sh
+
   smoke:
     runs-on: ubuntu-24.04
     steps:

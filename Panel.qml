@@ -79,7 +79,7 @@ Panel {
   readonly property var rowModel: allMode ? projects : projectList
   // En `all` los renglones son el contenido; en los otros modos son el
   // selector, y sólo tienen sentido si hay más de un proyecto declarado.
-  readonly property bool showRows: allMode || projectList.length > 1
+  readonly property bool showRows: allMode || projectList.length > 0
   readonly property int projectsTotal: projects.length
   readonly property int projectsUp: {
     var n = 0
@@ -125,7 +125,7 @@ Panel {
       : everythingUp ? "Todo arriba · " + projectsTotal
       : projectsUp > 0 ? projectsUp + "/" + projectsTotal + " arriba"
       : "Todo detenido")
-    : noProject ? "Sin proyecto"
+    : noProject ? (root.showRows ? "Sin proyecto · elegí uno abajo" : "Sin proyecto")
     : undeclared ? "Sin declarar · " + name
     : !loaded ? "Sin datos"
     : pending === "up" ? (pendingSeconds >= pendingTimeout ? "No terminó de levantar" : "Levantando… " + pendingSeconds + "s")
@@ -200,7 +200,9 @@ Panel {
       : root.pinned !== "" ? cli + " " + root.pinned + " json"
       : root.mode === "fixed" ? cli + root.projectArg + " json"
       // El respaldo viaja como argumento: una sola pasada, sin segunda sonda.
-      : cli + " here json --window" + (root.projectName !== "" ? " --fallback " + root.projectName : "")]
+      // Precedencia: la terminal que mirás → el ajuste `project` → el proyecto
+      // de casa (`devstack use`). Todo en una sola llamada.
+      : cli + " here json --window" + (root.projectName !== "" ? " --fallback " + root.projectName : "") + " --default"]
     stdout: StdioCollector { id: probeOutput }
     onExited: {
       var data = null
@@ -291,10 +293,18 @@ Panel {
   }
 
   // Fijar/soltar un proyecto: el renglón se clickea y el widget deja de seguir
-  // el foco (o vuelve a seguirlo).
+  // el foco (o vuelve a seguirlo). El pin se guarda también en el CLI
+  // (`devstack use`), así sobrevive al reinicio del shell y el CLI queda de
+  // acuerdo con lo que muestra la barra.
   function togglePin(project) {
     if (root.allMode || !project) return
-    root.pinned = root.pinned === project ? "" : project
+    if (root.pinned === project) {
+      root.pinned = ""
+      bar.run("DEVDATA_NOTIFY=off " + cli + " use --clear")
+    } else {
+      root.pinned = project
+      bar.run("DEVDATA_NOTIFY=off " + cli + " use " + project)
+    }
     refresh()
   }
 

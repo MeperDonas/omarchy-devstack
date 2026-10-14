@@ -26,6 +26,17 @@
 #   devstack <p> --up                 exit 0 si todo escucha
 #   devstack <p> --foreign            exit 0 si algún puerto lo tiene un proceso ajeno
 #
+#   devstack init <p>                 crea el JSON de un proyecto desde una plantilla
+#   devstack scan <dir>               propone el stack de un repo (no escribe nada)
+#   devstack add <dir>                declara el stack que propone `scan`
+#   devstack all [status|json|up|down]  todos TUS proyectos de una vez
+#   devstack here [cmd] [--window] [--fallback <p>] [--default]
+#                                     el proyecto de la terminal activa (--window) o del
+#                                     $PWD, y reenvía ahí cmd: status, up, down, logs…
+#   devstack use [<p>|--clear]        proyecto de casa: el que se usa cuando no hay
+#                                     otro (el widget lo usa si la terminal no está
+#                                     en ningún proyecto declarado)
+#
 # Overrides: DEVDATA_CONFIG (dir de configs) DEVDATA_PROJECT (proyecto por defecto)
 #            DEVDATA_NOTIFY=all|final|off  (avisos de escritorio; el widget usa final)
 #            DEVDATA_WAIT_SCALE (multiplica las esperas)
@@ -167,6 +178,52 @@ project_file() {
     return 1
 }
 
+# Proyecto "de casa": el que guarda `devstack use`. Si el archivo apunta a un
+# proyecto que ya no existe devuelve error en vez de morir: lo usan `here` y el
+# widget, donde caerse no es opción.
+default_project() {
+    local f="$USER_CONFIG_DIR/default" name
+    [[ -r $f ]] || return 1
+    name=$(<"$f")
+    [[ -n $name ]] || return 1
+    project_file "$name" >/dev/null || return 1
+    printf '%s' "$name"
+}
+
+use_cmd() {
+    local f="$USER_CONFIG_DIR/default" want="${1:-}" cur
+    case $want in
+        --help | -h)
+            printf 'devstack use [PROYECTO|--clear]\n'
+            printf '  sin argumentos  muestra el proyecto de casa\n'
+            printf '  PROYECTO        lo guarda (el widget lo usa cuando la terminal no está\n'
+            printf '                  en ningún proyecto declarado)\n'
+            printf '  --clear         lo olvida y vuelve a depender de la lectura automática\n'
+            return 0
+            ;;
+        --clear)
+            rm -f "$f"
+            ok "Sin proyecto de casa: el widget vuelve a seguir la terminal"
+            return 0
+            ;;
+        "")
+            if cur=$(default_project); then
+                printf '%s\n' "$cur"
+            elif [[ -r $f ]]; then
+                warn "El proyecto guardado ('$(<"$f")') ya no existe: corré 'devstack use --clear'"
+                return 1
+            else
+                printf 'Sin proyecto de casa\n'
+            fi
+            return 0
+            ;;
+    esac
+    project_file "$want" >/dev/null || die "No existe el proyecto '$want' (busqué en ${CONFIG_DIRS[*]})"
+    mkdir -p "$USER_CONFIG_DIR"
+    printf '%s\n' "$want" >"$f"
+    ok "Proyecto de casa: $want (el widget lo usa cuando no reconoce la terminal)"
+}
+
 resolve_project() {
     local want="${1:-$DEFAULT_PROJECT}" all=()
     if [[ -z $want ]]; then
@@ -178,7 +235,7 @@ resolve_project() {
                 if [[ -r $USER_CONFIG_DIR/default ]]; then
                     want=$(<"$USER_CONFIG_DIR/default")
                 else
-                    die "Hay varios proyectos (${all[*]}): pasá el nombre o guardá el default en $USER_CONFIG_DIR/default"
+                    die "Hay varios proyectos (${all[*]}): pasá el nombre o corré 'devstack use <nombre>'"
                 fi
                 ;;
         esac
@@ -852,10 +909,11 @@ looks_like_repo() {
 # proyecto en la MISMA pasada: el widget no necesita una segunda sonda (que se
 # pisaba con ésta y dejaba el estado en blanco entre sondeo y sondeo).
 here() {
-    local sub=json use_window="" fallback=""
+    local sub=json use_window="" fallback="" use_default=""
     while [[ $# -gt 0 ]]; do
         case $1 in
             --window) use_window=--window ;;
+            --default) use_default=1 ;;
             --fallback)
                 shift
                 fallback=${1:-}
@@ -879,16 +937,23 @@ here() {
         fi
         return 0
     fi
-    # El foco no resolvió a un proyecto declarado: si hay respaldo, se usa ese.
-    if [[ -n $fallback ]]; then
+    # El foco no resolvió a un proyecto declarado: respaldo del ajuste y, si no,
+    # el proyecto de casa (`devstack use`). Todo en esta pasada.
+    local candidate=""
+    if [[ -n $fallback ]] && project_file "$fallback" >/dev/null 2>&1; then
+        candidate=$fallback
+    elif [[ -n $use_default ]]; then
+        candidate=$(default_project) || candidate=""
+    fi
+    if [[ -n $candidate ]]; then
         if [[ $sub == json ]]; then
-            if inner=$("$0" "$fallback" json 2>/dev/null); then
-                printf '%s' "$inner" | jq -c --arg p "$fallback" --arg cwd "$cwd" --arg repo "$repo" \
+            if inner=$("$0" "$candidate" json 2>/dev/null); then
+                printf '%s' "$inner" | jq -c --arg p "$candidate" --arg cwd "$cwd" --arg repo "$repo" \
                     '. + {mode:"auto",declared:true,fallback:true,project:$p,cwd:$cwd,repo:$repo}'
                 return 0
             fi
         else
-            exec "$0" "$fallback" "$sub"
+            exec "$0" "$candidate" "$sub"
         fi
     fi
     [[ -n $(printf '%s' "$repo") ]] || repo=""
@@ -1138,7 +1203,7 @@ usage() {
 
 # ---------------------------------------------------------------- dispatch
 
-KNOWN_COMMANDS=" up down restart status json logs open task list menu init --running --up --foreign "
+KNOWN_COMMANDS=" up down restart status json logs open task list menu init use --running --up --foreign "
 
 [[ $# -gt 0 ]] || {
     list_projects
@@ -1167,6 +1232,10 @@ case "$1" in
         ;;
     here)
         here "${@:2}"
+        exit 0
+        ;;
+    use)
+        use_cmd "${2:-}"
         exit 0
         ;;
     all)
