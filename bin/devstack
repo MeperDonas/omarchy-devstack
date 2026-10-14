@@ -491,9 +491,11 @@ svc_up() {
     local health
     health=$(svc_field "$id" health)
     if [[ -n $health ]]; then
-        wait_for_http "$health" "$(scaled "${wait:-120}")" "$label" || {
+        local deadline
+        deadline=$(scaled "${wait:-120}")
+        wait_for_http "$health" "$deadline" "$label" || {
             tail_log "$(svc_logfile "$id")"
-            die "$label no llegó a responder en ${wait}s"
+            die "$label no llegó a responder en ${deadline}s"
         }
         notify "$label respondiendo (:$port)"
     else

@@ -112,7 +112,7 @@ Panel {
     : undeclared ? "working"
     : !loaded ? "error"
     : starting ? "working"
-    : stuck ? "error"
+    : stuck && pending === "" ? "error"
     : allUp ? "ok"
     : anyUp ? "working"
     : "off"
@@ -130,7 +130,7 @@ Panel {
     : !loaded ? "Sin datos"
     : pending === "up" ? (pendingSeconds >= pendingTimeout ? "No terminó de levantar" : "Levantando… " + pendingSeconds + "s")
     : pending === "down" ? "Bajando… " + pendingSeconds + "s"
-    : stuck ? "Servicio sin responder"
+    : stuck && pending === "" ? "Servicio sin responder"
     : allUp ? (services.every(function (s) { return s.health === "" || s.healthy }) ? "Arriba" : "Arriba · compilando")
     : anyUp ? "Parcial · falta " + missingText
     : "Detenido") + (!allMode && pinned !== "" ? " · fijado" : "")
@@ -253,11 +253,7 @@ Panel {
       }
       var unhealthy = root.services.some(function (s) { return s.health !== "" && s.up && !s.healthy })
       root.stuckPolls = unhealthy ? root.stuckPolls + 1 : 0
-      // Un servicio arriba que nunca contesta no termina de levantar jamás: si
-      // ya se marcó como colgado no hay acción "en curso" que mostrar. Sin
-      // esto el sondeo se queda en 2 s y la barrita de progreso va y viene
-      // para siempre.
-      if (root.pending !== "" && root.stuck) root.pending = ""
+      if (root.pending !== "" && root.pendingSeconds >= root.pendingTimeout) root.pending = ""
       // Una acción termina cuando llega a su estado destino *posible*: lo que no
       // maneja devstack (procesos ajenos) no cuenta.
       if (root.pending === "up" && root.allUp) root.pending = ""
@@ -314,7 +310,10 @@ Panel {
 
   Timer {
     id: refreshTimer
-    interval: (root.starting ? 2 : root.refreshInterval) * 1000
+    // Sólo el primer minuto de una acción va a 2 s (una compilación en frío
+    // tarda, pero sondear cada 2 s durante los 5 minutos del timeout es
+    // gastar sin motivo).
+    interval: (root.starting && root.pendingSeconds < 60 ? 2 : root.refreshInterval) * 1000
     repeat: true
     running: true
     onTriggered: root.refresh()
