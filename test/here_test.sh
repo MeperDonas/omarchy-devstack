@@ -65,6 +65,29 @@ expect_args "--default con proyecto borrado no inventa nada" \
     '.declared == false' "$tmp/plain" --default
 rm -f "$tmp/xdg/devstack/default" "$tmp/xdg/devstack/otro.json"
 
+# --- ventana activa: el foco se resuelve por el árbol de procesos -------------
+# Omarchy sólo resuelve kitty (socket) o un hijo listado en /etc/shells; con
+# ghostty devolvía $HOME. Acá se simula `hyprctl` para probar nuestra resolución.
+fakebin="$tmp/fakebin"
+mkdir -p "$fakebin"
+fake_hyprctl() { # fake_hyprctl <pid>
+    printf '#!/bin/bash\nprintf %%s %s\n' "'{\"pid\":$1}'" >"$fakebin/hyprctl"
+    chmod +x "$fakebin/hyprctl"
+}
+( cd "$tmp/proj" && exec sleep 30 ) &
+watch_proj=$!
+( cd "$tmp/plain" && exec sleep 30 ) &
+watch_plain=$!
+
+fake_hyprctl "$watch_proj"
+PATH="$fakebin:$PATH" expect_args "--window resuelve el foco por el árbol de procesos" \
+    '.declared == true and .project == "myapp"' "$tmp/plain" --window
+fake_hyprctl "$watch_plain"
+PATH="$fakebin:$PATH" expect_args "--window con una ventana sin proyecto no inventa nada" \
+    '.declared == false' "$tmp/plain" --window
+kill "$watch_proj" "$watch_plain" 2>/dev/null || true
+rm -rf "$fakebin"
+
 printf 'here (resolver el proyecto de una ruta)\n'
 expect "dentro de un proyecto declarado" '.declared == true and .project == "myapp"' "$tmp/proj"
 expect "dentro de una subcarpeta del proyecto" '.declared == true and .project == "myapp"' "$tmp/proj/sub"

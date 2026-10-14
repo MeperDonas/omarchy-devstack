@@ -75,7 +75,10 @@ Panel {
   property int pendingSeconds: 0
   property int stuckPolls: 0
 
-  readonly property string effectiveProject: projectName !== "" ? projectName : resolvedProject
+  // El proyecto de las ACCIONES: el que el CLI resolvió (foco, ajuste o casa) o,
+  // si todavía no resolvió nada, el del ajuste. Con `project` fijo acá, los
+  // botones actuaban sobre ese proyecto aunque el popup mostrara otro.
+  readonly property string effectiveProject: resolvedProject !== "" ? resolvedProject : projectName
   readonly property string projectArg: effectiveProject !== "" ? " " + effectiveProject : ""
 
   readonly property bool starting: pending !== ""
@@ -102,6 +105,24 @@ Panel {
   readonly property bool stuck: stuckPolls >= stuckAfterPolls && services.some(function (s) {
     return s.health !== "" && s.up && !s.healthy
   })
+  // Puertos que comparto con otro proyecto declarado (el "arriba" de uno puede
+  // ser el proceso del otro).
+  readonly property var clashPorts: {
+    var mine = services.filter(function (s) { return s.port > 0 }).map(function (s) { return s.port })
+    var out = []
+    for (var i = 0; i < projectList.length; i++) {
+      var other = projectList[i]
+      if (other.project === root.effectiveProject) continue
+      var svcs = other.services || []
+      for (var j = 0; j < svcs.length; j++) {
+        var p = svcs[j].port
+        if (p > 0 && mine.indexOf(p) >= 0 && out.indexOf(p) < 0) out.push(p)
+      }
+    }
+    return out
+  }
+  readonly property bool hasClash: !allMode && clashPorts.length > 0
+
   readonly property string missingText: {
     var faltan = []
     for (var i = 0; i < services.length; i++) {
@@ -137,7 +158,9 @@ Panel {
     : stuck && pending === "" ? "Servicio sin responder"
     : allUp ? (services.every(function (s) { return s.health === "" || s.healthy }) ? "Arriba" : "Arriba · compilando")
     : anyUp ? "Parcial · falta " + missingText
-    : "Detenido") + (allMode ? "" : pinned !== "" ? " · fijado" : fallbackUsed ? " · por defecto" : "")
+    // El chip dice de dónde salió el proyecto: del foco, de tu ajuste/casa
+    // ("por defecto") o porque lo fijaste. Así "Seguir el foco" se entiende.
+    : "Detenido") + (allMode || !declared ? "" : pinned !== "" ? " · fijado" : fallbackUsed ? " · por defecto" : " · foco")
 
   function svcColor(s) {
     if (s.health !== "") return s.healthy ? colorOk : (s.up ? (stuck ? colorError : colorWorking) : colorOff)
@@ -797,6 +820,17 @@ Panel {
             accent: root.svcColor(modelData)
           }
         }
+      }
+
+      Text {
+        visible: root.hasClash
+        width: contentColumn.width
+        horizontalAlignment: Text.AlignHCenter
+        text: "󰀦 :" + root.clashPorts.join(" · :") + " compartido con otro proyecto: el que escucha puede ser el del otro"
+        color: root.colorWorking
+        wrapMode: Text.WordWrap
+        font.family: bar ? bar.fontFamily : "monospace"
+        font.pixelSize: 10
       }
 
       Row {

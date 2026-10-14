@@ -983,14 +983,60 @@ project_for_path() {
 }
 
 # Ruta de referencia: la terminal activa (--window) o el directorio actual.
-reference_path() {
-    if [[ ${1:-} == --window ]] && command -v omarchy-cmd-terminal-cwd >/dev/null 2>&1; then
-        local cwd
-        cwd=$(omarchy-cmd-terminal-cwd 2>/dev/null)
-        [[ -d $cwd ]] && {
+# Cwd de un pid y de sus descendientes (hasta 3 niveles). Omarchy sólo resuelve
+# el terminal activo para kitty (socket) o cuando el hijo es un shell listado en
+# /etc/shells; con ghostty devolvía $HOME y el foco nunca resolvía.
+pid_cwds() {
+    local pid=$1 depth=${2:-3} child
+    [[ -n $pid && -d /proc/$pid ]] || return 0
+    readlink -f "/proc/$pid/cwd" 2>/dev/null
+    ((depth > 0)) || return 0
+    for child in $(pgrep -P "$pid" 2>/dev/null); do
+        pid_cwds "$child" "$((depth - 1))"
+    done
+}
+
+# Cwd de la ventana activa, buscando en su árbol de procesos un directorio que
+# sea de un proyecto declarado. Vacío si no hay nada útil: así no inventamos un
+# proyecto a partir del directorio de la ventana equivocada.
+window_cwd() {
+    command -v hyprctl >/dev/null 2>&1 || return 0
+    command -v jq >/dev/null 2>&1 || return 0
+    local pid cwd
+    pid=$(hyprctl activewindow -j 2>/dev/null | jq -r '.pid // empty' 2>/dev/null)
+    [[ -n $pid ]] || return 0
+    while IFS= read -r cwd; do
+        [[ -n $cwd && -d $cwd ]] || continue
+        if project_for_path "$cwd" >/dev/null 2>&1; then
             printf '%s' "$cwd"
             return 0
-        }
+        fi
+    done < <(pid_cwds "$pid")
+    return 0
+}
+
+reference_path() {
+    if [[ ${1:-} == --window ]]; then
+        # Con Hyprland: ventana activa -> árbol de procesos -> lo que diga
+        # Omarchy. Si la ventana no es un terminal, $HOME = "ningún proyecto".
+        if command -v hyprctl >/dev/null 2>&1; then
+            local cwd
+            cwd=$(window_cwd)
+            if [[ -n $cwd ]]; then
+                printf '%s' "$cwd"
+                return 0
+            fi
+            if command -v omarchy-cmd-terminal-cwd >/dev/null 2>&1; then
+                cwd=$(omarchy-cmd-terminal-cwd 2>/dev/null)
+                if [[ -d $cwd && $cwd != "$HOME" ]]; then
+                    printf '%s' "$cwd"
+                    return 0
+                fi
+            fi
+            printf '%s' "$HOME"
+            return 0
+        fi
+        # Sin Hyprland (CI, otra sesión): no hay ventana que mirar, vale el $PWD.
     fi
     printf '%s' "$PWD"
 }
@@ -1109,6 +1155,20 @@ list_user_projects() {
 }
 
 # Estado resumido de un proyecto (una línea JSON).
+# Puertos declarados por más de un proyecto tuyo: se pisan entre sí (y entonces
+# el "arriba" de uno puede ser el proceso del otro).
+port_clashes() {
+    local p f port
+    for p in $(list_user_projects); do
+        f=$(project_file "$p") || continue
+        while IFS= read -r port; do
+            [[ -n $port && $port != 0 ]] || continue
+            printf '%s\t%s\n' "$port" "$p"
+        done < <(jq -r '.services[]? | (.port // empty)' "$f" 2>/dev/null)
+    done | sort -n | awk -F'\t' '{owners[$1] = owners[$1] " " $2; n[$1]++}
+        END { for (p in n) if (n[p] > 1) printf "  :%s  lo declaran:%s\n", p, owners[p] }' | sort
+}
+
 project_snapshot() {
     local p=$1 inner
     inner=$("$0" "$p" json 2>/dev/null) || return 1
@@ -1116,7 +1176,7 @@ project_snapshot() {
         up: ([.services[] | select(.up)] | length),
         total: (.services | length),
         allUp: (([.services[] | select(if .health != "" then .healthy else .up end)] | length) == (.services | length)),
-        services: [.services[] | {id: .id, label: .label, up: .up, healthy: .healthy}]}'
+        services: [.services[] | {id: .id, label: .label, port: .port, up: .up, healthy: .healthy}]}'
 }
 
 # devstack all [json|status|up|down]
@@ -1144,6 +1204,11 @@ all_cmd() {
                     "$(printf '%s' "$s" | jq -r '"\(.up)/\(.total)"')" \
                     "$(printf '%s' "$s" | jq -r '[.services[] | (if .healthy then "✓" elif .up then "~" else "·" end)] | join("")')"
             done
+            # Puertos compartidos: el "arriba" de un proyecto puede ser el
+            # proceso del otro (dos proyectos en :3000 se contestan cruzado).
+            local clashes
+            clashes=$(port_clashes)
+            [[ -n $clashes ]] && printf '\n\033[1;33m[aviso]\033[0m  puertos compartidos entre proyectos:\n%s\n' "$clashes"
             ;;
         up)
             local failed=0

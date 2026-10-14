@@ -38,6 +38,9 @@ jobs:
       - name: Config files are valid JSON
         run: for f in config/*.json; do jq -e . "$f" >/dev/null || exit 1; done
 
+      - name: All projects (`devstack all`)
+        run: ./test/all_test.sh
+
       - name: Declaring a project (`devstack add`)
         run: ./test/add_test.sh
 

@@ -153,8 +153,9 @@ devstack here up              # lift the stack of the project you are standing i
 devstack here down            # …and drop it
 ```
 
-`here` reads the working directory of the focused terminal (through Omarchy's
-`omarchy-cmd-terminal-cwd`), maps it to the declared project that contains it —
+`here` reads the working directory of the focused window (walking the process tree of
+the active window, so it works with any terminal — Omarchy's helper only knows kitty —
+and then asking `omarchy-cmd-terminal-cwd`), maps it to the declared project that contains it —
 longest match wins, so a subdirectory is still its project — and forwards any
 subcommand there. An undeclared repo shows up in the widget as
 `Sin declarar · <repo>` with a **Declarar este stack** button that runs the
@@ -229,6 +230,11 @@ In `auto` and `fixed` the same rows appear at the top of the popup as a **projec
 selector**: the one being shown is in bold, a click on a row pins that project
 (the widget stops following the terminal; **Seguir el foco** goes back), and the
 row's `▶`/`⏻` button lifts or drops just that project.
+
+Two of your projects declaring the same port is warned about in `devstack all status`,
+and the widget shows it under the service chips (`:3000 compartido con otro proyecto`)
+— the one listening may be the other project's process, so a stack can look "up" when
+what answers is its neighbour.
 
 A service that is listening but never answers the health check is reported as
 `Servicio sin responder` and the "lifting" state is dropped there: without that,
@@ -417,6 +423,11 @@ así sobrevive al reinicio del shell y el CLI queda de acuerdo con la barra
 permanente: `mode: fixed` + `project` en la entrada del widget, o apuntá el widget
 entero a cualquier invocación del CLI con el ajuste `command`.
 
+**Ojo con los puertos.** Si dos de tus proyectos declaran el mismo puerto,
+`devstack all status` lo avisa y el widget lo muestra bajo los chips (*:3000
+compartido con otro proyecto*): el que escucha puede ser el proceso del otro, así
+que un stack puede verse "arriba" cuando el que contesta es el vecino.
+
 **Buscar en vez de esperar.** El botón *Buscar proyectos* del popup corre
 `devstack find`: recorre tus carpetas (`~/Projects` por defecto; `DEVDATA_SEARCH_ROOTS`
 con `:` para varias, `--depth` para bajar más) y lista cada repo con stack
@@ -443,7 +454,9 @@ inglés para Claude Code, opencode y codex).
 
 **Seguir tu sesión (modo auto).** Por defecto el widget muestra el stack de la
 **terminal que estás mirando**: `devstack here json --window` resuelve la carpeta
-de la terminal activa (con `omarchy-cmd-terminal-cwd`), la mapea al proyecto
+de la ventana activa **recorriendo su árbol de procesos** (funciona con cualquier
+terminal; la herramienta de Omarchy sólo conoce kitty) y, si no, pregunta a
+`omarchy-cmd-terminal-cwd`; la mapea al proyecto
 declarado que la contiene y reenvía ahí cualquier subcomando (`devstack here up`
 levanta lo que estás mirando). Si el repo no está declarado, el widget lo dice con
 un botón para declararlo con el detector; si no hay nada que resolver, el
