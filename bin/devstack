@@ -28,7 +28,8 @@
 #
 #   devstack init <p>                 crea el JSON de un proyecto desde una plantilla
 #   devstack scan <dir>               propone el stack de un repo (no escribe nada)
-#   devstack add <dir>                declara el stack que propone `scan`
+#   devstack add <dir> [--name <n>]   declara el stack que propone `scan`
+#                                     (repetirlo sobre el mismo dir no rompe)
 #   devstack all [status|json|up|down]  todos TUS proyectos de una vez
 #   devstack here [cmd] [--window] [--fallback <p>] [--default]
 #                                     el proyecto de la terminal activa (--window) o del
@@ -1242,7 +1243,18 @@ add_cmd() {
     mkdir -p "$USER_CONFIG_DIR"
     local target="$USER_CONFIG_DIR/$name.json"
     if [[ -e $target && -z $force ]]; then
-        die "Ya existe $target (usá --force para pisarlo)"
+        # Repetir el mismo `add` sobre el mismo directorio no es un conflicto:
+        # es la misma declaración (pasa al volver a elegir un candidato que ya
+        # habías declarado). Conflictúa sólo si ese nombre apunta a otro lado.
+        local have_dir
+        have_dir=$(jq -r '.dir // empty' "$target" 2>/dev/null)
+        have_dir="${have_dir/#\~/$HOME}"
+        have_dir=$(cd "$have_dir" 2>/dev/null && pwd) || have_dir="${have_dir%/}"
+        if [[ -n $have_dir && $have_dir == "$root" ]]; then
+            ok "Ya estaba declarado: $name ($root) — seguí con 'devstack $name up'"
+            return 0
+        fi
+        die "El nombre '$name' ya está tomado por $target (declara ${have_dir:-otro directorio}): usá --force para pisarlo, o --name <otro> para declarar este directorio con otro nombre"
     fi
     # ¿ese mismo directorio ya está declarado con otro nombre? Es el error fácil
     # (declarar dos veces el mismo repo porque el nombre no coincidía).

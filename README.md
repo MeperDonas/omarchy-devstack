@@ -134,6 +134,10 @@ devstack add  ~/Projects/my-app     # writes ~/.config/devstack/my-app.json
 | `AGENTS.md`, `CLAUDE.md`, `README.md`, `.claude/`, `.codex/`, `.opencode/`, `.pi/`, `herdr*` | the commands the repo already documents — the most reliable source in repos that are worked on inside a coding agent |
 
 `scan` prints the reasoning line by line; `add` refuses to overwrite an existing
+project, refuses to declare the same directory twice under another name, and is
+*idempotent*: running it again on the same directory is not a conflict, it just tells you
+it was already declared (`--force` overwrites, `--name <otro>` declares the same directory
+under another name).
 project and refuses to declare the same directory twice under another name.
 
 ### Follow the session (auto mode)

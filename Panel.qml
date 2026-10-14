@@ -356,10 +356,22 @@ Panel {
       root.runCommand(cli + " " + candidate.project + " " + (candidate.up > 0 ? "down" : "up"))
       return
     }
+    // La lista que estás mirando ya no vale: ese candidato dejó de estar sin
+    // declarar (y si el detector no lo pudo declarar, la próxima búsqueda lo
+    // vuelve a mostrar tal cual).
+    refindTimer.restart()
     root.runInTerminal(cli + " add \"" + candidate.dir + "\" --name " + candidate.suggested + " && " + cli + " " + candidate.suggested + " up")
   }
 
   onOpenedChanged: if (opened) { refresh(); refreshList() }
+
+  // Tras elegir un candidato, la búsqueda se refresca sola (el popup se cierra
+  // para la acción: al volver está al día).
+  Timer {
+    id: refindTimer
+    interval: 7000
+    onTriggered: if (root.searching && !findProbe.running) findProbe.running = true
+  }
 
   Timer {
     id: pendingTimer
