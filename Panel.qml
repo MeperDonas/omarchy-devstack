@@ -467,6 +467,18 @@ Panel {
         ActionButton { label: "Menú"; icon: "󰒓"; enabled: true; onTriggered: root.runCommand("omarchy menu summon " + (root.effectiveProject !== "" ? "dev." + root.effectiveProject : "dev")) }
       }
 
+      // Repo reconocido pero sin declarar: se declara con el detector, en una
+      // terminal, para ver qué infirió antes de que escriba nada.
+      ActionButton {
+        anchors.horizontalCenter: parent.horizontalCenter
+        visible: root.undeclared
+        wide: true
+        label: "Declarar este stack"
+        icon: "󰐊"
+        enabled: !root.starting
+        onTriggered: root.runInTerminal(cli + " add " + repo + (suggested !== "" ? " --name " + suggested : ""))
+      }
+
       ActionButton {
         anchors.horizontalCenter: parent.horizontalCenter
         visible: root.declared && root.needsTakeover
