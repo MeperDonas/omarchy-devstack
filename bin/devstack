@@ -33,7 +33,7 @@
 set -euo pipefail
 
 CONFIG_DIR="${DEVDATA_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/devstack}"
-RUNTIME_BASE="${XDG_RUNTIME_DIR:-/tmp}/devstack"
+RUNTIME_BASE="${XDG_RUNTIME_DIR:-/tmp}/devstack-$(id -u)"
 DEFAULT_PROJECT="${DEVDATA_PROJECT:-}"
 WAIT_SCALE="${DEVDATA_WAIT_SCALE:-1}"
 CURRENT=""
@@ -65,7 +65,7 @@ _notify() {
     if [[ "$1" == "$last_msg" ]] && ((now - last_at < 60)); then
         return 0
     fi
-    mkdir -p "$RUNTIME_BASE" 2>/dev/null || true
+    ensure_runtime 2>/dev/null || return 0
     printf '%s\t%s\n' "$now" "$1" >"$stamp" 2>/dev/null || true
     notify-send "${DEVDATA_NAME:-devstack}" "$1" >/dev/null 2>&1 || true
 }
@@ -80,6 +80,18 @@ notify() {
 notify_result() {
     [[ $NOTIFY_MODE == off ]] && return 0
     _notify "$1"
+}
+
+# El estado (pidfiles, logs) tiene que ser del usuario y privado. Si no hay
+# XDG_RUNTIME_DIR caemos en /tmp/devstack-<uid> y lo verificamos antes de
+# escribir: una ruta predecible en /tmp que otro usuario pueda pre-crear es
+# justo lo que el baseline de seguridad del marketplace marca.
+ensure_runtime() {
+    if [[ ! -d $RUNTIME_BASE ]]; then
+        mkdir -p "$RUNTIME_BASE" 2>/dev/null || die "No puedo crear $RUNTIME_BASE"
+    fi
+    [[ -O $RUNTIME_BASE ]] || die "$RUNTIME_BASE no es mío; no escribo ahí"
+    chmod 700 "$RUNTIME_BASE" 2>/dev/null || true
 }
 
 # ---------------------------------------------------------------- sondas
@@ -295,6 +307,7 @@ tail_log() {
 start_process() {
     local id=$1 label=$2 dir=$3
     shift 3
+    ensure_runtime
     mkdir -p "$RUNTIME_DIR"
     chmod 700 "$RUNTIME_DIR"
     local logfile pidfile
