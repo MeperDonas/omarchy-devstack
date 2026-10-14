@@ -539,7 +539,7 @@ Panel {
       Row {
         anchors.horizontalCenter: parent.horizontalCenter
         spacing: 8
-        visible: root.declared
+        visible: root.declared && !root.allMode
         ActionButton { label: "Levantar"; icon: "󰐊"; enabled: !root.allUp && !root.starting; onTriggered: root.run("up") }
         ActionButton { label: "Bajar"; icon: "󰍃"; enabled: root.anyUp && !root.starting; onTriggered: root.run("down") }
       }
