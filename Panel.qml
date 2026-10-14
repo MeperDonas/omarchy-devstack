@@ -775,7 +775,7 @@ Panel {
           visible: !root.allMode && root.pinned !== ""
           onTriggered: root.unpinProject()
         }
-        // En  el popup ya lista todos los proyectos; buscar sigue teniendo
+        // En modo all el popup ya lista todos los proyectos; buscar sigue teniendo
         // sentido para los repos que todavía no declaraste.
         ActionButton { label: "Buscar proyectos"; icon: "󰍉"; visible: true; onTriggered: root.findProjects() }
       }
