@@ -46,6 +46,22 @@ green when every service answers.
 | working | yellow `#E5B454` | lifting / restarting / partially up / compiling the first route |
 | ok | green `#7FBF7F` | every service with a health URL responds |
 
+## Where this sits next to the neighbours
+
+The marketplace already has plenty of plugins that *watch* docker or *find*
+ports. This one is about **lifting a project's stack in order** — and that is a
+different job:
+
+| If you want to… | A plugin like… may be enough |
+|---|---|
+| see container state, logs, stats | the docker monitor plugins |
+| find, open or kill a port that is already listening | the port-discovery plugins (Localhost, Omaports, Portboard, aportless) |
+| toggle individual services/commands by hand | Services Manager |
+| **declare one project, start its services in order, wait for real health, open the browser when it answers, and stop the whole thing without orphans** | devstack |
+
+devstack also takes over a port that a stray dev server is holding (`--force`),
+and never touches a process it did not start.
+
 ## Requirements
 
 - Omarchy with plugin support (the bar widget is a `bar-widget` plugin). The CLI
@@ -241,6 +257,8 @@ apagado, rojo error, amarillo trabajando, verde arriba.
 el **resultado** (`final`, por defecto) y no una notificación por etapa que
 además quedaría encima del panel. `all` para todo, `off` para silencio
 (ajuste `notifyMode` del widget, o `DEVDATA_NOTIFY` en el CLI).
+
+**Dónde encaja.** El marketplace ya tiene plugins que *miran* docker o *encuentran* puertos (Localhost, Omaports, Portboard, aportless, Services Manager). Este es para **levantar el stack de un proyecto en orden**: declarás los servicios, espera la salud real de cada uno, abre el navegador cuando contesta y baja todo sin dejar huérfanos.
 
 **Lo importante.** No toca procesos que no levantó él (los marca `ajeno`/`ext`),
 no deja `nest`/`next` huérfanos y avisa por notificación en cada etapa. Con
