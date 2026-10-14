@@ -767,7 +767,7 @@ Panel {
       // buscar en tus carpetas: los dos en la misma fila.
       Row {
         anchors.horizontalCenter: parent.horizontalCenter
-        visible: !root.searching && !root.allMode
+        visible: !root.searching
         spacing: 8
         ActionButton {
           label: "Quitar el fijado"
@@ -775,7 +775,9 @@ Panel {
           visible: !root.allMode && root.pinned !== ""
           onTriggered: root.unpinProject()
         }
-        ActionButton { label: "Buscar proyectos"; icon: "󰍉"; visible: !root.allMode; onTriggered: root.findProjects() }
+        // En  el popup ya lista todos los proyectos; buscar sigue teniendo
+        // sentido para los repos que todavía no declaraste.
+        ActionButton { label: "Buscar proyectos"; icon: "󰍉"; visible: true; onTriggered: root.findProjects() }
       }
 
       Row {
