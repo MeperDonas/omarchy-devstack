@@ -68,6 +68,13 @@ check "tool desconocida → isError" \
 check "método desconocido → error -32601" \
     'any(.[]; .id == 7 and .error.code == -32601)'
 
+if [[ ! -s $tmp/err.log ]]; then
+    ok "stderr limpio (sin ruido de jq)"
+else
+    bad "stderr tiene ruido"
+    sed 's/^/       /' "$tmp/err.log" >&2
+fi
+
 if ((fail)); then
     printf '\033[1;31mmcp: hay fallos\033[0m\n' >&2
     exit 1

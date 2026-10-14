@@ -105,8 +105,8 @@ tools_json() {
 
 call_tool() { # call_tool <id-json> <nombre> <args-json>
     local id=$1 name=$2 args=$3 project path out rc
-    project=$(printf '%s' "$args" | jq -r '.project // empty')
-    path=$(printf '%s' "$args" | jq -r '.path // empty')
+    project=$(printf '%s' "$args" | jq -r '.project // empty' 2>/dev/null)
+    path=$(printf '%s' "$args" | jq -r '.path // empty' 2>/dev/null)
 
     case $name in
     devstack_list)
@@ -141,7 +141,7 @@ call_tool() { # call_tool <id-json> <nombre> <args-json>
             tool_text "$id" "Falta 'path'" true
         else
             local name_arg=()
-            [[ -n $(printf '%s' "$args" | jq -r '.name // empty') ]] && name_arg=(--name "$(printf '%s' "$args" | jq -r '.name')")
+            [[ -n $(printf '%s' "$args" | jq -r '.name // empty' 2>/dev/null) ]] && name_arg=(--name "$(printf '%s' "$args" | jq -r '.name' 2>/dev/null)")
             if out=$(run_cli add "$path" "${name_arg[@]}"); then tool_text "$id" "$out"; else tool_text "$id" "$out" true; fi
         fi
         ;;
@@ -153,7 +153,7 @@ call_tool() { # call_tool <id-json> <nombre> <args-json>
         # En segundo plano a propósito: levantar puede tardar (compilaciones) y el
         # agente puede seguir el avance con devstack_status.
         local force=""
-        [[ $(printf '%s' "$args" | jq -r '.force // false') == true ]] && force=--force
+        [[ $(printf '%s' "$args" | jq -r '.force // false' 2>/dev/null) == true ]] && force=--force
         mkdir -p "${XDG_RUNTIME_DIR:-/tmp}/devstack" 2>/dev/null || true
         setsid "$DEVSTACK" "$project" up $force >>"${XDG_RUNTIME_DIR:-/tmp}/devstack/mcp.log" 2>&1 &
         tool_text "$id" "Levantando $project en segundo plano (mirá devstack_status para seguir el avance)."
@@ -164,13 +164,13 @@ call_tool() { # call_tool <id-json> <nombre> <args-json>
             return 0
         fi
         local keep=()
-        [[ $(printf '%s' "$args" | jq -r '.keepDocker // false') == true ]] && keep=(--keep-docker)
+        [[ $(printf '%s' "$args" | jq -r '.keepDocker // false' 2>/dev/null) == true ]] && keep=(--keep-docker)
         if out=$(run_cli "$project" down "${keep[@]}"); then tool_text "$id" "$out"; else tool_text "$id" "$out" true; fi
         ;;
     devstack_logs)
         local svc lines
-        svc=$(printf '%s' "$args" | jq -r '.service // empty')
-        lines=$(printf '%s' "$args" | jq -r '.lines // 80')
+        svc=$(printf '%s' "$args" | jq -r '.service // empty' 2>/dev/null)
+        lines=$(printf '%s' "$args" | jq -r '.lines // 80' 2>/dev/null)
         if [[ -z $project ]]; then
             tool_text "$id" "Falta 'project'" true
         elif [[ -z $svc ]]; then
@@ -213,7 +213,9 @@ while IFS= read -r line; do
     tools/call)
         name=$(printf '%s' "$line" | jq -r '.params.name // empty' 2>/dev/null)
         args=$(printf '%s' "$line" | jq -c '.params.arguments // {}' 2>/dev/null)
-        call_tool "$id" "$name" "${args:-{}}"
+        # Ojo: ${args:-{}} concatena la llave del `:-` y deja "{}}" (JSON inválido).
+        [[ -n $args ]] || args='{}'
+        call_tool "$id" "$name" "$args"
         ;;
     *)
         [[ -n $id ]] && rpc_error "$id" -32601 "Method not found: $method"
