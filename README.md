@@ -190,7 +190,10 @@ And when you would rather go looking yourself, the popup has a **Buscar proyecto
 button: it runs `devstack find`, which walks your project folders (`~/Projects` by
 default; `DEVDATA_SEARCH_ROOTS` with `:` for more, `--depth` for deeper trees) and
 lists every repo with a stack it can recognise — the ones you already declared first,
-with their live state. Clicking a declared one lifts it (and pins it); clicking one
+with their live state. Candidates are labelled with their path inside the search root
+(`MeperPOS-loans-module`, `Proyecto de Grado/gestion-inventario-app`), so two `backend`
+folders never look the same; a directory whose stack is already covered by its parent
+is not offered again. Clicking a declared one lifts it (and pins it); clicking one
 that is not declared yet declares it *and* lifts it in a terminal, so you see what
 the detector inferred before anything is written.
 
@@ -413,7 +416,9 @@ entero a cualquier invocación del CLI con el ajuste `command`.
 **Buscar en vez de esperar.** El botón *Buscar proyectos* del popup corre
 `devstack find`: recorre tus carpetas (`~/Projects` por defecto; `DEVDATA_SEARCH_ROOTS`
 con `:` para varias, `--depth` para bajar más) y lista cada repo con stack
-reconocible — primero los que ya declaraste, con su estado en vivo. Un click en uno
+reconocible — primero los que ya declaraste, con su estado en vivo y etiquetados con
+su ruta dentro de la carpeta buscada (`MeperPOS-loans-module`, `Proyecto de
+Grado/gestion-inventario-app`), así dos `backend` nunca se confunden ni se repiten. Un click en uno
 declarado lo levanta (y lo fija); en uno sin declarar, lo declara *y* lo levanta en
 una terminal, así ves lo que propone el detector antes de que escriba nada.
 `devstack find --json` es lo que lee el widget.

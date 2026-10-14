@@ -356,7 +356,7 @@ Panel {
       root.runCommand(cli + " " + candidate.project + " " + (candidate.up > 0 ? "down" : "up"))
       return
     }
-    root.runInTerminal(cli + " add \"" + candidate.dir + "\" && " + cli + " " + candidate.suggested + " up")
+    root.runInTerminal(cli + " add \"" + candidate.dir + "\" --name " + candidate.suggested + " && " + cli + " " + candidate.suggested + " up")
   }
 
   onOpenedChanged: if (opened) { refresh(); refreshList() }
@@ -718,9 +718,11 @@ Panel {
               }
 
               Text {
-                text: modelData.suggested
-                width: parent.width - 120
-                elide: Text.ElideRight
+                text: modelData.label !== undefined ? modelData.label : modelData.suggested
+                width: parent.width - 92
+                // Por el medio: en rutas lo que identifica está en los dos
+                // extremos ("Proyecto de Grado/…-inventario-app").
+                elide: Text.ElideMiddle
                 color: bar ? bar.foreground : "white"
                 font.family: bar ? bar.fontFamily : "monospace"
                 font.pixelSize: 11

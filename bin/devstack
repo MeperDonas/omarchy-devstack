@@ -250,41 +250,69 @@ find_cmd() {
         IFS=':' read -r -a roots <<<"${DEVDATA_SEARCH_ROOTS:-$HOME/Projects}"
     fi
     require_scan
-    local root dir json rows="[]" entry name declared p candidates=() prev
+    # Dónde están TUS proyectos ya declarados: un directorio que ya es un
+    # proyecto (o vive dentro de uno) no se propone como candidato aparte.
+    local decl_paths=() decl_names=() p d i
+    while IFS= read -r p; do
+        [[ -n $p ]] || continue
+        d=$(jq -r '.dir // ""' "$(project_file "$p")" 2>/dev/null)
+        d="${d/#\~/$HOME}"
+        d=$(cd "$d" 2>/dev/null && pwd) || d="${d%/}"
+        [[ -n $d ]] || continue
+        decl_paths+=("$d")
+        decl_names+=("$p")
+    done < <(list_user_projects)
+
+    local root dir json rows="[]" entry name label declared skipped candidates=() prev n
     for root in "${roots[@]}"; do
         [[ -d $root ]] || continue
+        root=$(cd "$root" && pwd)
         while IFS= read -r dir; do
-            # Si ya acepté la carpeta madre, sus hijos no son otro proyecto
-            # (backend/frontend de un monorepo, .next, node_modules…).
+            # Si ya acepté la carpeta madre, sus hijos no son otro proyecto.
             for prev in ${candidates[@]+"${candidates[@]}"}; do
                 [[ $dir == "$prev"/* ]] && continue 2
             done
-            looks_like_repo "$dir" || continue
-            candidates+=("$dir")
-            json=$(scan_project_json "$dir" "" 2>/dev/null | grep -v '^#') || continue
-            [[ -n $json ]] || continue
-            name=$(sanitize_name "$(basename "$dir")")
+
             declared=""
-            if project_file "$name" >/dev/null 2>&1; then
-                declared=$name
-            else
-                # Un proyecto puede estar declarado con otro nombre y el mismo dir.
-                while IFS= read -r p; do
-                    [[ -n $p ]] || continue
-                    if [[ $(jq -r '.dir // ""' "$(project_file "$p")" 2>/dev/null) == "$dir" ]]; then
-                        declared=$p
-                        break
-                    fi
-                done < <(list_user_projects)
-            fi
-            entry=$(printf '%s' "$json" | jq -c --arg dir "$dir" --arg p "$name" --arg d "$declared" \
-                '{name: (.name // $p), dir: $dir, suggested: $p, declared: ($d != ""), project: $d,
-                  services: [.services[]? | {id: .id, label: .label, type: .type, port: .port}],
-                  docker: ([.services[]? | select(.type == "docker")] | length)}')
-            # Si ya está declarado, el renglón necesita su estado (up/total).
+            skipped=""
+            for ((i = 0; i < ${#decl_paths[@]}; i++)); do
+                if [[ $dir == "${decl_paths[$i]}" ]]; then
+                    declared="${decl_names[$i]}"
+                    break
+                fi
+                if [[ $dir == "${decl_paths[$i]}"/* ]]; then
+                    skipped=1
+                    break
+                fi
+            done
+            [[ -n $skipped ]] && continue
+
+            rel=${dir#"$root"/}
             if [[ -n $declared ]]; then
-                entry=$(printf '%s' "$entry" | jq -c --argjson s "$(project_snapshot "$declared" 2>/dev/null || printf '{}')" \
-                    '. + {up: ($s.up // 0), total: ($s.total // 0), allUp: ($s.allUp // false)}')
+                # Ya declarado: su estado (y sus servicios) salen del proyecto,
+                # no del detector. Se acepta acá y se podan sus hijos.
+                candidates+=("$dir")
+                entry=$(project_snapshot "$declared" | jq -c --arg dir "$dir" --arg l "$rel" --arg d "$declared" \
+                    '{name: .name, dir: $dir, label: $l, suggested: $d, declared: true, project: $d,
+                      services: .services, docker: 0, up: .up, total: .total, allUp: .allUp}')
+            else
+                # El detector decide: si de acá salen servicios, es un proyecto
+                # (aunque su stack viva en backend/ y frontend/).
+                json=$(scan_project_json "$dir" "" 2>/dev/null | grep -v '^#') || continue
+                [[ -n $json ]] || continue
+                n=$(printf '%s' "$json" | jq '.services | length')
+                ((n > 0)) || continue
+                # Un candidato tiene que parecer un repo (marcador en la raíz) o
+                # traer un stack de verdad (2+ servicios): así un directorio
+                # contenedor con un solo service suelto no se come a los
+                # proyectos que tiene adentro.
+                if ((n < 2)) && ! looks_like_repo "$dir"; then continue; fi
+                name=$(sanitize_name "$rel")
+                candidates+=("$dir")
+                entry=$(printf '%s' "$json" | jq -c --arg dir "$dir" --arg l "$rel" --arg p "$name" \
+                    '{name: (.name // $p), dir: $dir, label: $l, suggested: $p, declared: false, project: "",
+                      services: [.services[]? | {id: .id, label: .label, type: .type, port: .port}],
+                      docker: ([.services[]? | select(.type == "docker")] | length), up: 0, total: 0, allUp: false}')
             fi
             rows=$(printf '%s' "$rows" | jq -c --argjson e "$entry" '. + [$e]')
         done < <(find "$root" -mindepth 1 -maxdepth "$depth" -type d \
@@ -292,9 +320,9 @@ find_cmd() {
             -not -path '*/.next*' -not -path '*/build*' -not -path '*/target*' \
             -not -path '*/vendor*' -not -path '*/.venv*' -not -path '*/__pycache__*' 2>/dev/null | sort)
     done
-    # Los que ya tenés declarados primero (son los que podés levantar ya mismo),
-    # después por nombre.
-    rows=$(printf '%s' "$rows" | jq -c 'sort_by([(if .declared then 0 else 1 end), (.suggested // "")])')
+
+    # Primero los que ya podés levantar, después los que traen más servicios.
+    rows=$(printf '%s' "$rows" | jq -c 'sort_by([(if .declared then 0 else 1 end), (if .declared then 0 else -(.services | length) end), (.label // "")])')
     if [[ $opt == --json ]]; then
         printf '%s\n' "$rows"
         return 0
@@ -304,8 +332,9 @@ find_cmd() {
         return 1
     fi
     printf '%s' "$rows" | jq -r '.[] |
-        [(if .declared then "declarado" else "sin declarar" end), .suggested,
-         ((.services | length) | tostring), (if .docker > 0 then "docker" else "" end), .dir] | @tsv' \
+        [(if .declared then "declarado" else "sin declarar" end), .label,
+         (if .declared then ((.total | tostring) + " serv.") else ((.services | length) | tostring) + " serv." end),
+         (if .docker > 0 then "docker" else "" end), .dir] | @tsv' \
         | column -t -s$'\t'
     printf '\nPara declarar uno: devstack add <ruta>  ·  para levantarlo ya: devstack add <ruta> && devstack <nombre> up\n'
 }

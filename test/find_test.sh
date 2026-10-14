@@ -17,6 +17,11 @@ printf '{"services":{"db":{"image":"postgres:16"}}}\n' >"$tmp/root/tres/docker-c
 printf 'hola\n' >"$tmp/root/nada/notas.txt"
 mkdir -p "$tmp/root/uno/.next" && printf '{"scripts":{"dev":"x"}}\n' >"$tmp/root/uno/.next/package.json"
 
+# Un stack anidado que el padre no puede describir: el candidato es el hijo, con
+# la ruta como etiqueta (así "backend" y "frontend" no se confunden entre sí).
+mkdir -p "$tmp/root/caja/servicio"
+printf '{"services":{"db":{"image":"postgres:16"},"web":{"image":"node:22"}}}\n' >"$tmp/root/caja/servicio/docker-compose.yml"
+
 # `dos` ya declarado (con otro nombre) apuntando a su ruta
 printf '{"name":"Dos","dir":"%s/root/dos","services":[{"id":"web","label":"web","type":"process","dir":"","cmd":"sleep 1","port":9,"health":""}]}\n' \
     "$tmp" >"$tmp/xdg/devstack/dos-proyecto.json"
@@ -33,11 +38,13 @@ bad() {
 printf 'find (buscar proyectos en tus carpetas)\n'
 json=$("$DEVSTACK" find "$tmp/root" --json)
 
-[[ $(printf '%s' "$json" | jq 'length') == 3 ]] && ok "encuentra los 3 repos (y no las subcarpetas ni .next)" \
-    || bad "encuentra los 3 repos (y no las subcarpetas ni .next)"
-[[ $(printf '%s' "$json" | jq -r '[.[].suggested] | sort | join(",")') == "dos,tres,uno" ]] \
-    && ok "sugiere un nombre por carpeta" || bad "sugiere un nombre por carpeta"
-[[ $(printf '%s' "$json" | jq -r '.[] | select(.suggested == "dos") | .declared') == true ]] \
+[[ $(printf '%s' "$json" | jq 'length') == 4 ]] && ok "encuentra los 4 repos (y no las subcarpetas ni .next)" \
+    || bad "encuentra los 4 repos (y no las subcarpetas ni .next)"
+[[ $(printf '%s' "$json" | jq -r '.[] | select(.suggested == "caja-servicio") | .label') == "caja/servicio" ]] \
+    && ok "el stack anidado se etiqueta con su ruta" || bad "el stack anidado se etiqueta con su ruta"
+[[ $(printf '%s' "$json" | jq -r '[.[].suggested] | sort | join(",")') == "caja-servicio,dos-proyecto,tres,uno" ]] \
+    && ok "sugiere un nombre por carpeta (y el del proyecto si ya está declarado)" || bad "sugiere un nombre por carpeta"
+[[ $(printf '%s' "$json" | jq -r '.[] | select(.suggested == "dos-proyecto") | .declared') == true ]] \
     && ok "marca declarado al que ya lo está (aunque el nombre no coincida)" || bad "marca declarado al que ya lo está"
 [[ $(printf '%s' "$json" | jq -r '.[] | select(.suggested == "tres") | .docker') == 1 ]] \
     && ok "cuenta los servicios docker" || bad "cuenta los servicios docker"
@@ -45,11 +52,11 @@ json=$("$DEVSTACK" find "$tmp/root" --json)
     && ok "los declarados van primero" || bad "los declarados van primero"
 [[ $(printf '%s' "$json" | jq -r '.[] | select(.suggested == "nada") | .suggested') == "" ]] \
     && ok "no inventa proyectos donde no hay stack" || bad "no inventa proyectos donde no hay stack"
-[[ $(printf '%s' "$json" | jq -r '.[] | select(.suggested == "dos") | .services | length') -ge 1 ]] \
+[[ $(printf '%s' "$json" | jq -r '.[] | select(.suggested == "dos-proyecto") | .services | length') -ge 1 ]] \
     && ok "el candidato trae sus servicios" || bad "el candidato trae sus servicios"
 
 "$DEVSTACK" find "$tmp/root/nada" >/dev/null 2>&1 && bad "sin candidatos avisa y sale != 0" || ok "sin candidatos avisa y sale != 0"
-DEVDATA_SEARCH_ROOTS="$tmp/root" "$DEVSTACK" find --json | jq -e 'length == 3' >/dev/null \
+DEVDATA_SEARCH_ROOTS="$tmp/root" "$DEVSTACK" find --json | jq -e 'length == 4' >/dev/null \
     && ok "DEVDATA_SEARCH_ROOTS define dónde buscar" || bad "DEVDATA_SEARCH_ROOTS define dónde buscar"
 
 if ((fail)); then
