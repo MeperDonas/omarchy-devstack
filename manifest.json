@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "meperdonas.devstack",
   "name": "devstack",
-  "version": "1.1.3",
+  "version": "1.2.0",
   "author": "Santiago Villabona (MeperDonas)",
   "license": "MIT",
   "description": "One bar icon per local dev stack: lift, watch and drop docker services and dev servers, in order, with a four-colour state and a take-over button for ports held by stray processes.",
@@ -27,7 +27,7 @@
     "defaultSection": "right",
     "defaults": {
       "project": "",
-      "command": "devstack",
+      "command": "",
       "refreshIntervalSec": 5,
       "stuckAfterPolls": 6,
       "pendingTimeoutSec": 300,
@@ -49,8 +49,8 @@
         "key": "command",
         "type": "string",
         "label": "devstack command",
-        "defaultValue": "devstack",
-        "description": "How to run the CLI, if it is not on PATH (for example ~/.local/bin/devstack)."
+        "defaultValue": "",
+        "description": "Empty = the CLI that ships inside the plugin (falling back to `devstack` on PATH). Set it only to point somewhere else."
       },
       {
         "key": "refreshIntervalSec",

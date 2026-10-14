@@ -191,8 +191,14 @@ fi
 # ---------------------------------------------------------------- menú
 
 if ((PATCH_MENU)); then
+    # Sin --config, el bloque se genera para todos los proyectos ya instalados.
     if [[ ${#CONFIGS[@]} -eq 0 ]]; then
-        warn "--menu necesita --config ARCHIVO (para saber qué proyecto generar)"
+        for f in "$DEVDATA_DIR"/*.json; do
+            [[ -r $f ]] && CONFIGS+=("$f")
+        done
+    fi
+    if [[ ${#CONFIGS[@]} -eq 0 ]]; then
+        warn "--menu necesita al menos un proyecto (corré 'devstack init NOMBRE' o pasá --config ARCHIVO)"
     else
         run mkdir -p "$(dirname "$MENU_JSONC")"
         [[ -f $MENU_JSONC ]] || run printf '{\n}\n' >"$MENU_JSONC"

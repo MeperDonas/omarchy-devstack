@@ -32,7 +32,16 @@
 
 set -euo pipefail
 
-CONFIG_DIR="${DEVDATA_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/devstack}"
+# Configs: el proyecto del usuario manda; los ejemplos que viajan DENTRO del
+# plugin quedan de respaldo (el plugin se instala clonando el repo entero, así
+# que `omarchy plugin add` ya trae el CLI y los ejemplos de una sola vez).
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+USER_CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/devstack"
+BUNDLED_CONFIG_DIR="$SCRIPT_DIR/../config"
+CONFIG_DIRS=()
+[[ -n ${DEVDATA_CONFIG:-} ]] && CONFIG_DIRS+=("$DEVDATA_CONFIG")
+CONFIG_DIRS+=("$USER_CONFIG_DIR")
+[[ -d $BUNDLED_CONFIG_DIR ]] && CONFIG_DIRS+=("$BUNDLED_CONFIG_DIR")
 # Estado por usuario: bajo XDG_RUNTIME_DIR cuando existe; si no, un directorio
 # propio con el uid (una ruta predecible y compartida en /tmp es lo que el
 # baseline de seguridad del marketplace marca).
@@ -126,11 +135,28 @@ pid_of_file() {
 # ---------------------------------------------------------------- config
 
 list_projects() {
-    local f
-    for f in "$CONFIG_DIR"/*.json; do
-        [[ -r $f ]] || continue
-        basename "$f" .json
+    local dir f name seen=""
+    for dir in "${CONFIG_DIRS[@]}"; do
+        for f in "$dir"/*.json; do
+            [[ -r $f ]] || continue
+            name=$(basename "$f" .json)
+            [[ " $seen " == *" $name "* ]] && continue
+            seen="$seen $name"
+            printf '%s\n' "$name"
+        done
     done
+}
+
+# Ruta del config de un proyecto: se busca en orden (usuario primero).
+project_file() {
+    local name=$1 dir
+    for dir in "${CONFIG_DIRS[@]}"; do
+        [[ -r "$dir/$name.json" ]] && {
+            printf '%s' "$dir/$name.json"
+            return 0
+        }
+    done
+    return 1
 }
 
 resolve_project() {
@@ -138,24 +164,24 @@ resolve_project() {
     if [[ -z $want ]]; then
         while IFS= read -r p; do [[ -n $p ]] && all+=("$p"); done < <(list_projects)
         case ${#all[@]} in
-            0) die "No hay proyectos en $CONFIG_DIR" ;;
+            0) die "No hay proyectos: corré 'devstack init NOMBRE' o poné un .json en $USER_CONFIG_DIR" ;;
             1) want="${all[0]}" ;;
             *)
-                if [[ -r $CONFIG_DIR/default ]]; then
-                    want=$(<"$CONFIG_DIR/default")
+                if [[ -r $USER_CONFIG_DIR/default ]]; then
+                    want=$(<"$USER_CONFIG_DIR/default")
                 else
-                    die "Hay varios proyectos (${all[*]}): pasá el nombre o guardá el default en $CONFIG_DIR/default"
+                    die "Hay varios proyectos (${all[*]}): pasá el nombre o guardá el default en $USER_CONFIG_DIR/default"
                 fi
                 ;;
         esac
     fi
-    [[ -r "$CONFIG_DIR/$want.json" ]] || die "No existe el proyecto '$want' ($CONFIG_DIR/$want.json)"
+    project_file "$want" >/dev/null || die "No existe el proyecto '$want' (busqué en ${CONFIG_DIRS[*]})"
     printf '%s' "$want"
 }
 
 load_project() {
     CURRENT=$(resolve_project "${1:-}")
-    CONFIG_FILE="$CONFIG_DIR/$CURRENT.json"
+    CONFIG_FILE=$(project_file "$CURRENT")
     command -v jq >/dev/null || die "Falta jq (pacman -S jq)"
     DEVDATA_NAME=$(jq -r '.name // env.DEVDATA_NAME // "devstack"' "$CONFIG_FILE")
     DIR=$(jq -r '.dir // "."' "$CONFIG_FILE")
@@ -734,6 +760,22 @@ list_all() {
     done < <(jq -r '.tasks[]? | "\(.id)\t\(.label // "")\t\(.cmd)"' "$CONFIG_FILE")
 }
 
+# Crea un proyecto nuevo a partir del ejemplo que viaja con el plugin.
+init_project() {
+    local name=$1 target example
+    [[ -n $name ]] || die "init: falta el nombre (devstack init mi-app)"
+    [[ $name =~ ^[a-zA-Z0-9._-]+$ ]] || die "init: nombre inválido '$name'"
+    mkdir -p "$USER_CONFIG_DIR"
+    target="$USER_CONFIG_DIR/$name.json"
+    [[ -e $target ]] && die "Ya existe $target"
+    example=""
+    [[ -r $BUNDLED_CONFIG_DIR/example.json ]] && example="$BUNDLED_CONFIG_DIR/example.json"
+    [[ -n $example ]] || die "No encuentro el ejemplo en $BUNDLED_CONFIG_DIR"
+    cp "$example" "$target"
+    ok "Proyecto creado: $target"
+    printf '  %s\n' "editá \"dir\" y los servicios, y después: devstack $name up"
+}
+
 # Bloque JSONC para pegar en ~/.config/omarchy/extensions/omarchy-menu.jsonc.
 # Se arma con jq para que el escapado de las acciones sea correcto por
 # construcción (cada action termina envuelta en '...' para bash -lc).
@@ -771,7 +813,7 @@ usage() {
 
 # ---------------------------------------------------------------- dispatch
 
-KNOWN_COMMANDS=" up down restart status json logs open task list menu --running --up --foreign "
+KNOWN_COMMANDS=" up down restart status json logs open task list menu init --running --up --foreign "
 
 [[ $# -gt 0 ]] || {
     list_projects
@@ -790,12 +832,16 @@ case "$1" in
             exit 0
         fi
         ;;
+    init)
+        init_project "${2:-}"
+        exit 0
+        ;;
 esac
 
 # `devstack <comando>` sin proyecto (así lo llama el widget de la barra): si el
 # primer argumento es un comando conocido y no un proyecto existente, se usa el
 # proyecto por defecto.
-if [[ " $KNOWN_COMMANDS " == *" $1 "* && ! -r "$CONFIG_DIR/$1.json" ]]; then
+if [[ " $KNOWN_COMMANDS " == *" $1 "* ]] && ! project_file "$1" >/dev/null 2>&1; then
     CMD="$1"
     PROJECT_ARG=""
     shift

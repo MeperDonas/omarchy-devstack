@@ -72,27 +72,36 @@ and never touches a process it did not start.
 
 ## Install
 
-```bash
-git clone https://github.com/MeperDonas/omarchy-devstack.git
-cd omarchy-devstack
-
-# plugin + CLI + config + bar entry + Omarchy menu section, in one go
-./install.sh --project myproject --config config/example.json --menu
-omarchy restart shell
-```
-
-Or do it by hand:
+One command: the plugin carries the CLI and the example stacks inside the same
+clone, so the widget works as soon as it is enabled.
 
 ```bash
 omarchy plugin add https://github.com/MeperDonas/omarchy-devstack --enable
-install -m755 bin/devstack ~/.local/bin/devstack
-mkdir -p ~/.config/devstack && cp config/example.json ~/.config/devstack/myproject.json
+devstack init my-app        # creates ~/.config/devstack/my-app.json from the example
+devstack my-app up          # once you edited dir + services
+```
+
+Already included, no extra steps: the widget's menu button, the shipped `demo`
+stack (`devstack demo up`, a python http.server) and `example`.
+
+Optional extras:
+
+```bash
+git clone https://github.com/MeperDonas/omarchy-devstack.git && cd omarchy-devstack
+./install.sh --menu          # adds the Dev section to the Omarchy menu
+./install.sh --project my-app   # points the widget at one project
 ```
 
 `install.sh` is idempotent, updates the plugin when it is already installed, never
-overwrites an existing config, and leaves a backup of every file it edits.
-Flags: `--project NAME`, `--config FILE` (repeatable), `--menu`,
+overwrites an existing config, and leaves a backup of every file it edits. Flags:
+`--project NAME`, `--config FILE` (repeatable), `--menu`,
 `--section left|center|right`, `--no-enable`, `--dry-run`.
+
+Everything else is one `install` away if you want the CLI on `PATH`:
+
+```bash
+install -m755 ~/.config/omarchy/plugins/meperdonas.devstack/bin/devstack ~/.local/bin/devstack
+```
 
 Uninstall with `./uninstall.sh` (add `--keep-config` to keep your stacks).
 
@@ -233,10 +242,14 @@ desarrollo, health checks y el navegador, en orden.
 **Instalar.**
 
 ```bash
-git clone https://github.com/MeperDonas/omarchy-devstack.git && cd omarchy-devstack
-./install.sh --project miproyecto --config config/example.json --menu
-omarchy restart shell
+omarchy plugin add https://github.com/MeperDonas/omarchy-devstack --enable
+devstack init mi-app        # crea ~/.config/devstack/mi-app.json desde el ejemplo
+devstack mi-app up
 ```
+
+El plugin trae adentro el CLI y los stacks de ejemplo, así que no hace falta
+clonar ni copiar nada: el widget funciona apenas se habilita. Para el menú de
+Omarchy: `./install.sh --menu`.
 
 Es un **plugin de Omarchy** (`bar-widget`): se instala con `omarchy plugin add`,
 se actualiza con `omarchy plugin update` y se configura desde los ajustes de

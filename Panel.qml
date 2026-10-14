@@ -19,7 +19,15 @@ Panel {
 
   // ------------------------------------------------------------ ajustes
   readonly property string projectName: setting("project", "")
-  readonly property string cli: setting("command", "devstack")
+  // El CLI viaja DENTRO del plugin: `omarchy plugin add` clona el repo entero,
+  // así que un solo `omarchy plugin add --enable` deja el widget funcionando.
+  // Se usa ese binario y, si no está, el `devstack` del PATH; el ajuste
+  // `command` manda si está puesto.
+  readonly property string bundledCli: Quickshell.env("HOME") + "/.config/omarchy/plugins/meperdonas.devstack/bin/devstack"
+  readonly property string configuredCli: setting("command", "")
+  readonly property string cli: configuredCli !== ""
+    ? configuredCli
+    : "$( [ -x " + bundledCli + " ] && printf %s " + bundledCli + " || printf %s devstack )"
   readonly property int refreshInterval: setting("refreshIntervalSec", 5)
   readonly property int pendingTimeout: setting("pendingTimeoutSec", 300)
   readonly property int stuckAfterPolls: setting("stuckAfterPolls", 6)
