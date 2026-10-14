@@ -143,6 +143,7 @@ fixed project:
 
 ```bash
 devstack here json --window   # what the widget calls every 5 s
+devstack here json --window --fallback myapp   # …and answer with myapp if nothing resolves
 devstack here status          # the project of the terminal you are in
 devstack here up              # lift the stack of the project you are standing in
 devstack here down            # …and drop it
@@ -154,8 +155,10 @@ longest match wins, so a subdirectory is still its project — and forwards any
 subcommand there. An undeclared repo shows up in the widget as
 `Sin declarar · <repo>` with a **Declarar este stack** button that runs the
 detector in a terminal, so you see what it inferred before anything is written.
-If nothing resolves (you are looking at the browser, not a terminal) it falls back
-to the `project` setting; `mode: fixed` pins one project like before.
+If nothing resolves (you are looking at the browser, not a terminal)
+`--fallback <project>` answers with that project *in the same call* — the widget
+passes its `project` setting that way, so one probe resolves everything and the
+state never blinks; `mode: fixed` pins one project like before.
 
 Path resolution only looks at *your* projects (`~/.config/devstack`): the examples
 that ship with the plugin are for trying things out, not for deciding where you are.
@@ -173,6 +176,16 @@ devstack all down       # stop everything
 — and the popup into one row per project with **Levantar lo que falta** and
 **Bajar todo**. Only projects *you* declared count; the examples shipped with the
 plugin stay out.
+
+In `auto` and `fixed` the same rows appear at the top of the popup as a **project
+selector**: the one being shown is in bold, a click on a row pins that project
+(the widget stops following the terminal; **Seguir el foco** goes back), and the
+row's `▶`/`⏻` button lifts or drops just that project.
+
+A service that is listening but never answers the health check is reported as
+`Servicio sin responder` and the "lifting" state is dropped there: without that,
+an action that can never finish would keep the 2-second polling and the progress
+sweep running for the whole timeout.
 
 ### Let your coding agents drive the stacks (MCP)
 
@@ -347,7 +360,10 @@ Desinstalar: `./uninstall.sh`.
 **Todos a la vista.** `devstack all status|json|up|down` resume tus proyectos
 (arriba/total por proyecto) y con `mode: all` el icono de la barra muestra el
 glifo + `N/M` y el popup una fila por proyecto con *Levantar lo que falta* y
-*Bajar todo*.
+*Bajar todo*. En `auto` y `fixed` esas mismas filas son el **selector**: la que
+se está mostrando va en negrita, un click fija ese proyecto (el widget deja de
+seguir la terminal; *Seguir el foco* vuelve) y su botón `▶`/`⏻` levanta o baja
+sólo ese proyecto.
 
 **Para los agentes (MCP).** `devstack-mcp` es un servidor MCP por stdio (bash +
 jq) con `list/status/here/scan/declare/up/down/logs`: omp, opencode, claude,
@@ -360,8 +376,15 @@ inglés para Claude Code, opencode y codex).
 de la terminal activa (con `omarchy-cmd-terminal-cwd`), la mapea al proyecto
 declarado que la contiene y reenvía ahí cualquier subcomando (`devstack here up`
 levanta lo que estás mirando). Si el repo no está declarado, el widget lo dice con
-un botón para declararlo con el detector; si no hay nada que resolver, cae al
-proyecto del ajuste `project`. Con `mode: fixed` queda clavado como antes.
+un botón para declararlo con el detector; si no hay nada que resolver, el
+respaldo del ajuste `project` viaja como `--fallback` en la misma llamada (así
+el estado no parpadea entre dos sondas). Con `mode: fixed` queda clavado como
+antes.
+
+Un servicio que escucha pero nunca contesta el health se reporta como *Servicio
+sin responder* y ahí se suelta el estado de "levantando": si no, una acción que
+no puede terminar dejaría el sondeo en 2 s y la barrita de progreso dando vueltas
+hasta el timeout entero.
 
 **Detectar en vez de escribir.** `devstack scan <dir>` propone el stack de
 cualquier repo (compose, `package.json`, `.env`, código, y los comandos que

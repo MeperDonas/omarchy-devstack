@@ -55,6 +55,15 @@ Panel {
   property bool fallbackUsed: false
   property string repo: ""
   property var projects: []
+  // Lista de proyectos para el selector (sólo se pide al abrir el popup: en
+  // `auto` el sondeo normal trae un proyecto, no la lista).
+  property var projectList: []
+  // Proyecto fijado a mano: sin pin el widget sigue el foco de la terminal.
+  property string pinned: ""
+  // Firma de lo último aplicado: cada 5 s llega el mismo JSON y reasignar
+  // `services`/`projects` recrea los delegados y sus animaciones de entrada.
+  property string appliedSignature: ""
+  property string appliedListSignature: ""
   property string suggested: ""
   property var services: []
   property string openService: ""
@@ -67,6 +76,10 @@ Panel {
 
   readonly property bool starting: pending !== ""
   readonly property bool allMode: mode === "all"
+  readonly property var rowModel: allMode ? projects : projectList
+  // En `all` los renglones son el contenido; en los otros modos son el
+  // selector, y sólo tienen sentido si hay más de un proyecto declarado.
+  readonly property bool showRows: allMode || projectList.length > 1
   readonly property int projectsTotal: projects.length
   readonly property int projectsUp: {
     var n = 0
@@ -108,7 +121,7 @@ Panel {
     : stateKind === "working" ? colorWorking
     : colorOff
 
-  readonly property string stateText: allMode ? (!loaded ? "Sin datos"
+  readonly property string stateText: (allMode ? (!loaded ? "Sin datos"
       : everythingUp ? "Todo arriba · " + projectsTotal
       : projectsUp > 0 ? projectsUp + "/" + projectsTotal + " arriba"
       : "Todo detenido")
@@ -120,7 +133,7 @@ Panel {
     : stuck ? "Servicio sin responder"
     : allUp ? (services.every(function (s) { return s.health === "" || s.healthy }) ? "Arriba" : "Arriba · compilando")
     : anyUp ? "Parcial · falta " + missingText
-    : "Detenido"
+    : "Detenido") + (!allMode && pinned !== "" ? " · fijado" : "")
 
   function svcColor(s) {
     if (s.health !== "") return s.healthy ? colorOk : (s.up ? (stuck ? colorError : colorWorking) : colorOff)
@@ -161,6 +174,7 @@ Panel {
     // notificación (sólo el resultado, ver notifyMode).
     close()
     refreshTimer.restart()
+    refreshList()
     bar.run("DEVDATA_NOTIFY=" + root.notifyMode + " " + command)
   }
   // Lo que sigue saliendo por stdout (los logs) necesita una terminal: la barra
@@ -183,8 +197,10 @@ Panel {
     id: probe
     command: ["/bin/bash", "-lc", root.allMode
       ? cli + " all json"
+      : root.pinned !== "" ? cli + " " + root.pinned + " json"
       : root.mode === "fixed" ? cli + root.projectArg + " json"
-      : cli + " here json --window"]
+      // El respaldo viaja como argumento: una sola pasada, sin segunda sonda.
+      : cli + " here json --window" + (root.projectName !== "" ? " --fallback " + root.projectName : "")]
     stdout: StdioCollector { id: probeOutput }
     onExited: {
       var data = null
@@ -200,7 +216,11 @@ Panel {
       root.loaded = true
       if (root.allMode) {
         // all json devuelve un array de proyectos
-        root.projects = data
+        var sigAll = JSON.stringify(data)
+        if (sigAll !== root.appliedListSignature) {
+          root.appliedListSignature = sigAll
+          root.projects = data
+        }
         root.services = []
         root.name = "devstack"
         root.declared = true
@@ -218,19 +238,26 @@ Panel {
         root.name = data.name || ""
         root.resolvedProject = ""
         root.pending = ""
-        // Respaldo: si hay un proyecto por defecto en los ajustes, se muestra
-        // ése (así el icono no queda vacío por mirar otra ventana).
-        if (data.repo === "" && root.projectName !== "" && !fallbackProbe.running) fallbackProbe.running = true
         return
       }
-      root.fallbackUsed = false
-      root.repo = data.repo || ""
-      root.name = data.name || "devstack"
-      root.resolvedProject = data.project || ""
-      root.services = data.services || []
-      root.openService = data.open || ""
+      // `fallback` lo informa el propio CLI cuando usó el respaldo del ajuste.
+      root.fallbackUsed = data.fallback === true
+      var sig = JSON.stringify([data.name, data.project, data.repo, data.open, data.services])
+      if (sig !== root.appliedSignature) {
+        root.appliedSignature = sig
+        root.repo = data.repo || ""
+        root.name = data.name || "devstack"
+        root.resolvedProject = data.project || ""
+        root.services = data.services || []
+        root.openService = data.open || ""
+      }
       var unhealthy = root.services.some(function (s) { return s.health !== "" && s.up && !s.healthy })
       root.stuckPolls = unhealthy ? root.stuckPolls + 1 : 0
+      // Un servicio arriba que nunca contesta no termina de levantar jamás: si
+      // ya se marcó como colgado no hay acción "en curso" que mostrar. Sin
+      // esto el sondeo se queda en 2 s y la barrita de progreso va y viene
+      // para siempre.
+      if (root.pending !== "" && root.stuck) root.pending = ""
       // Una acción termina cuando llega a su estado destino *posible*: lo que no
       // maneja devstack (procesos ajenos) no cuenta.
       if (root.pending === "up" && root.allUp) root.pending = ""
@@ -242,30 +269,40 @@ Panel {
     }
   }
 
-  // Respaldo del modo auto: el proyecto del ajuste `project`, cuando la ventana
-  // activa no está dentro de ningún repo detectable.
+  // Lista para el selector: `all json` al abrir el popup (y tras una acción).
   Process {
-    id: fallbackProbe
-    command: ["/bin/bash", "-lc", root.cli + " " + root.projectName + " json"]
-    stdout: StdioCollector { id: fallbackOutput }
+    id: listProbe
+    command: ["/bin/bash", "-lc", root.cli + " all json"]
+    stdout: StdioCollector { id: listOutput }
     onExited: {
       var data = null
       try {
-        data = JSON.parse(String(fallbackOutput.text || ""))
+        data = JSON.parse(String(listOutput.text || ""))
       } catch (error) {
         data = null
       }
-      if (!data) return
-      root.declared = true
-      root.fallbackUsed = true
-      root.name = data.name || root.projectName
-      root.resolvedProject = data.project || root.projectName
-      root.repo = data.repo || ""
-      root.services = data.services || []
-      root.openService = data.open || ""
-      root.loaded = true
+      if (!data || !data.length) return
+      var sig = JSON.stringify(data)
+      if (sig === root.appliedListSignature) return
+      root.appliedListSignature = sig
+      root.projectList = data
     }
   }
+
+  function refreshList() {
+    if (root.allMode || listProbe.running) return
+    listProbe.running = true
+  }
+
+  // Fijar/soltar un proyecto: el renglón se clickea y el widget deja de seguir
+  // el foco (o vuelve a seguirlo).
+  function togglePin(project) {
+    if (root.allMode || !project) return
+    root.pinned = root.pinned === project ? "" : project
+    refresh()
+  }
+
+  onOpenedChanged: if (opened) { refresh(); refreshList() }
 
   Timer {
     id: pendingTimer
@@ -465,17 +502,36 @@ Panel {
         }
       }
 
-      // Modo all: un renglón por proyecto.
+      // Un renglón por proyecto: en `all` es el contenido; en `auto`/`fixed`
+      // es el selector (un click fija ese proyecto, otro click vuelve al foco).
       Column {
-        visible: root.allMode
+        visible: root.showRows
         width: contentColumn.width
         spacing: 5
 
         Repeater {
-          model: root.projects
+          model: root.rowModel
 
-          Row {
+          Item {
             width: parent.width
+            height: 22
+
+            Rectangle {
+              anchors.fill: parent
+              radius: 4
+              color: rowHover.containsMouse && !root.allMode ? Qt.rgba(1, 1, 1, 0.07) : "transparent"
+            }
+
+            MouseArea {
+              id: rowHover
+              anchors.fill: parent
+              hoverEnabled: true
+              cursorShape: Qt.PointingHandCursor
+              onClicked: root.togglePin(modelData.project)
+            }
+
+            Row {
+            anchors.fill: parent
             spacing: 6
             Rectangle {
               width: 7
@@ -491,6 +547,8 @@ Panel {
               color: bar ? bar.foreground : "white"
               font.family: bar ? bar.fontFamily : "monospace"
               font.pixelSize: 11
+              // El que se está mostrando (por foco o por pin) va en negrita.
+              font.bold: !root.allMode && modelData.project === root.resolvedProject
               anchors.verticalCenter: parent.verticalCenter
             }
             Text {
@@ -508,8 +566,17 @@ Panel {
               enabled: !root.starting
               onTriggered: root.runCommand(cli + " " + modelData.project + " " + (modelData.up > 0 ? "down" : "up"))
             }
+            }
           }
         }
+      }
+
+      // Con un proyecto fijado, volver a seguir el foco de la terminal.
+      Row {
+        anchors.horizontalCenter: parent.horizontalCenter
+        visible: !root.allMode && root.pinned !== ""
+        spacing: 8
+        ActionButton { label: "Seguir el foco"; icon: "󰁔"; onTriggered: root.togglePin(root.pinned) }
       }
 
       Row {

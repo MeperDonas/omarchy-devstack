@@ -23,13 +23,28 @@ bad() {
     fail=1
 }
 expect() { # expect <descripción> <filtro jq> <dir>
-    local desc=$1 filter=$2 dir=$3 json
-    json=$(cd "$dir" && "$DEVSTACK" here json 2>/dev/null || true)
+    local desc=$1 filter=$2 dir=$3
+    shift 3
+    expect_args "$desc" "$filter" "$dir" "$@"
+}
+
+expect_args() { # expect_args <descripción> <filtro jq> <dir> [args...]
+    local desc=$1 filter=$2 dir=$3
+    shift 3
+    local json
+    json=$(cd "$dir" && "$DEVSTACK" here json "$@" 2>/dev/null || true)
     if [[ -n $json ]] && printf '%s' "$json" | jq -e "$filter" >/dev/null 2>&1; then ok "$desc"; else
         bad "$desc"
         printf '       json: %s\n' "${json:-<vacío>}" >&2
     fi
 }
+
+expect_args "--fallback responde ese proyecto cuando el foco no resuelve" \
+    '.declared == true and .fallback == true and .project == "myapp" and (.services | length) == 1' "$tmp/plain" --fallback myapp
+expect_args "--fallback inexistente no inventa nada: sigue el estado neutro" \
+    '.declared == false and .repo == ""' "$tmp/plain" --fallback noexiste
+expect_args "--fallback no pisa la resolución normal" \
+    '.declared == true and .project == "myapp" and (.fallback // false) == false' "$tmp/proj" --fallback other
 
 printf 'here (resolver el proyecto de una ruta)\n'
 expect "dentro de un proyecto declarado" '.declared == true and .project == "myapp"' "$tmp/proj"

@@ -843,14 +843,22 @@ looks_like_repo() {
     return 1
 }
 
-# devstack here [json|status|<subcomando>] [--window]
+# devstack here [json|status|<subcomando>] [--window] [--fallback <proyecto>]
 # El proyecto de la terminal activa (--window, para el widget) o el del $PWD
 # (para un atajo de teclado: "levantá el stack de donde estoy parado").
+# Con --fallback, si el foco no está en un repo declarado se responde con ese
+# proyecto en la MISMA pasada: el widget no necesita una segunda sonda (que se
+# pisaba con ésta y dejaba el estado en blanco entre sondeo y sondeo).
 here() {
-    local sub=json use_window=""
+    local sub=json use_window="" fallback=""
     while [[ $# -gt 0 ]]; do
         case $1 in
             --window) use_window=--window ;;
+            --fallback)
+                shift
+                fallback=${1:-}
+                [[ -n $fallback ]] || die "here: --fallback necesita un nombre de proyecto"
+                ;;
             -*) die "here: opción desconocida $1" ;;
             *) sub=$1 ;;
         esac
@@ -868,6 +876,18 @@ here() {
             exec "$0" "$project" "$sub"
         fi
         return 0
+    fi
+    # El foco no resolvió a un proyecto declarado: si hay respaldo, se usa ese.
+    if [[ -n $fallback ]]; then
+        if [[ $sub == json ]]; then
+            if inner=$("$0" "$fallback" json 2>/dev/null); then
+                printf '%s' "$inner" | jq -c --arg p "$fallback" --arg cwd "$cwd" --arg repo "$repo" \
+                    '. + {mode:"auto",declared:true,fallback:true,project:$p,cwd:$cwd,repo:$repo}'
+                return 0
+            fi
+        else
+            exec "$0" "$fallback" "$sub"
+        fi
     fi
     [[ -n $(printf '%s' "$repo") ]] || repo=""
     if [[ -z $repo || ! -d $repo ]] || ! looks_like_repo "$repo"; then
