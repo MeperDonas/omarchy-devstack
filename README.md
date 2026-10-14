@@ -181,7 +181,7 @@ Resolution is a short chain and every step is a manual override:
    so you can pick one.
 
 You never have to leave the bar: **click a row** in the popup to pin that project (the
-widget stops following the terminal) and **Seguir el foco** to go back. Pressing a
+widget stops following the terminal) and **Quitar el fijado** to go back. Pressing a
 button no longer closes the popup (you watch the lift happen; `closeAfterAction: true`
 in the widget entry brings the old behaviour back), and a row whose own ▶/⏻ button
 started something shows *levantando…* exactly like the big button does. While the
@@ -213,6 +213,10 @@ devstack find --json               # the same, machine-readable (what the widget
 devstack find ~/code ~/work --depth 3
 ```
 
+The popup is 340 px wide by default and the buttons fill it; if you want it wider for
+longer names, add `"popupWidth": 380` to the widget entry (the content area is that
+minus the 32 px of margins).
+
 For something permanent, use `mode: fixed` plus `project` in the widget entry, or
 point the whole widget at any CLI invocation with the `command` setting
 (`command: "DEVDATA_CONFIG=/tmp/lab devstack"`).
@@ -233,7 +237,7 @@ plugin stay out.
 
 In `auto` and `fixed` the same rows appear at the top of the popup as a **project
 selector**: the one being shown is in bold, a click on a row pins that project
-(the widget stops following the terminal; **Seguir el foco** goes back), and the
+(the widget stops following the terminal; **Quitar el fijado** goes back), and the
 row's `▶`/`⏻` button lifts or drops just that project.
 
 Two of your projects declaring the same port is warned about in `devstack all status`,
@@ -457,7 +461,7 @@ como `--fallback`), el **proyecto de casa** (`devstack use <p>`, o sea el archiv
 `~/.config/devstack/default`, que también usa `devstack json` cuando hay varios
 proyectos y no pasás nombre) y, si no hay nada, el widget dice *Sin proyecto · elegí
 uno abajo* y lista tus proyectos. Sin salir de la barra: **un click en un renglón**
-fija ese proyecto y **Seguir el foco** vuelve; el pin se guarda con `devstack use`,
+fija ese proyecto y **Quitar el fijado** vuelve; el pin se guarda con `devstack use`,
 así sobrevive al reinicio del shell y el CLI queda de acuerdo con la barra
 (`devstack use`, `devstack use meperpos`, `devstack use --clear`). Para algo
 permanente: `mode: fixed` + `project` en la entrada del widget, o apuntá el widget
@@ -494,7 +498,7 @@ una terminal, así ves lo que propone el detector antes de que escriba nada.
 glifo + `N/M` y el popup una fila por proyecto con *Levantar lo que falta* y
 *Bajar todo*. En `auto` y `fixed` esas mismas filas son el **selector**: la que
 se está mostrando va en negrita, un click fija ese proyecto (el widget deja de
-seguir la terminal; *Seguir el foco* vuelve) y su botón `▶`/`⏻` levanta o baja
+seguir la terminal; *Quitar el fijado* vuelve) y su botón `▶`/`⏻` levanta o baja
 sólo ese proyecto.
 
 **Para los agentes (MCP).** `devstack-mcp` es un servidor MCP por stdio (bash +

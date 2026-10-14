@@ -43,6 +43,10 @@ Panel {
   // cómo avanza (y podés seguir tocando). Poné true para el comportamiento
   // viejo (cerrar y esperar la notificación).
   readonly property bool closeAfterAction: setting("closeAfterAction", false)
+  // Ancho del popup y ancho útil (lo que ocupan los botones): con los botones
+  // llenando ese ancho no queda el hueco a los costados.
+  readonly property int popupWidth: setting("popupWidth", 340)
+  readonly property int contentWidth: popupWidth - 32
   readonly property color colorOff: setting("colorOff", "#7A8394")
   readonly property color colorError: setting("colorError", "#E05561")
   readonly property color colorWorking: setting("colorWorking", "#E5B454")
@@ -186,7 +190,7 @@ Panel {
     : allUp ? (services.every(function (s) { return s.health === "" || s.healthy }) ? "Arriba" : "Arriba · compilando")
     : anyUp ? "Parcial · falta " + missingText
     // El chip dice de dónde salió el proyecto: del foco, de tu ajuste/casa
-    // ("por defecto") o porque lo fijaste. Así "Seguir el foco" se entiende.
+    // ("por defecto") o porque lo fijaste. Así "Quitar el fijado" se entiende.
     : "Detenido") + (allMode || !declared ? "" : pinned !== "" ? " · fijado" : fallbackUsed ? " · por defecto" : " · foco")
 
   function svcColor(s) {
@@ -559,7 +563,7 @@ Panel {
     // "hover": sin HyprlandFocusGrab, así el popup sobrevive al clic-arrastre de
     // slurp cuando estás encuadrando un screenshot.
     triggerMode: "hover"
-    contentWidth: 320
+    contentWidth: root.popupWidth
     contentHeight: popup.fittedContentHeight(contentColumn.implicitHeight + 32)
     margin: 14
 
@@ -759,20 +763,19 @@ Panel {
         }
       }
 
-      // Con un proyecto fijado, volver a seguir el foco de la terminal.
+      // Quitar el fijado (el widget vuelve a seguir la terminal / tu default) y
+      // buscar en tus carpetas: los dos en la misma fila.
       Row {
         anchors.horizontalCenter: parent.horizontalCenter
-        visible: !root.allMode && root.pinned !== "" && !root.searching
+        visible: !root.searching && !root.allMode
         spacing: 8
-        ActionButton { label: "Seguir el foco"; icon: "󰁔"; onTriggered: root.unpinProject() }
-      }
-
-      // Buscar en tus carpetas: la lista de candidatos, sin depender del foco.
-      Row {
-        anchors.horizontalCenter: parent.horizontalCenter
-        visible: !root.searching
-        spacing: 8
-        ActionButton { label: "Buscar proyectos"; icon: "󰍉"; onTriggered: root.findProjects() }
+        ActionButton {
+          label: "Quitar el fijado"
+          icon: "󰁔"
+          visible: !root.allMode && root.pinned !== ""
+          onTriggered: root.unpinProject()
+        }
+        ActionButton { label: "Buscar proyectos"; icon: "󰍉"; visible: !root.allMode; onTriggered: root.findProjects() }
       }
 
       Row {
@@ -1029,7 +1032,7 @@ Panel {
     property bool wide: false
     property bool compact: false
     signal triggered()
-    width: compact ? 26 : (wide ? 240 : 116)
+    width: compact ? 26 : (wide ? root.contentWidth : Math.floor((root.contentWidth - 8) / 2))
     height: compact ? 22 : 54
     radius: 2
     color: enabled ? (buttonMouse.containsMouse ? Qt.rgba(1, 1, 1, 0.18) : Qt.rgba(1, 1, 1, 0.10)) : Qt.rgba(1, 1, 1, 0.04)
