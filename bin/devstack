@@ -28,6 +28,11 @@
 #
 #   devstack init <p>                 crea el JSON de un proyecto desde una plantilla
 #   devstack scan <dir>               propone el stack de un repo (no escribe nada)
+#   devstack <p> port [<svc>] [--to N|--auto] [--dry-run]
+#                                     le cambia el puerto a un servicio (por
+#                                     defecto elige uno libre) y lo escribe en su
+#                                     url/health/cmd: sirve para correr dos stacks
+#                                     que se pelean el mismo puerto
 #   devstack add <dir> [--name <n>]   declara el stack que propone `scan`
 #                                     (repetirlo sobre el mismo dir no rompe)
 #   devstack all [status|json|up|down]  todos TUS proyectos de una vez
@@ -519,8 +524,8 @@ tail_log() {
 # ---------------------------------------------------------------- procesos
 
 start_process() {
-    local id=$1 label=$2 dir=$3
-    shift 3
+    local id=$1 label=$2 dir=$3 port=$4
+    shift 4
     ensure_runtime
     mkdir -p "$RUNTIME_DIR"
     chmod 700 "$RUNTIME_DIR"
@@ -531,7 +536,9 @@ start_process() {
     rm -f "$pidfile"
     # setsid: el servicio queda en su propia sesión (pgid == pid) para poder
     # matar el árbol entero de npm en `down`.
-    ( cd "$dir" || exit 1; setsid nohup "$@" >>"$logfile" 2>&1 & echo $! >"$pidfile" )
+    # El puerto va en el entorno (lo entienden next, nuxt, express…) y también
+    # se puede escribir {port} en el cmd (para los que piden un flag).
+    ( cd "$dir" || exit 1; PORT="$port" DEVDATA_PORT="$port" setsid nohup "$@" >>"$logfile" 2>&1 & echo $! >"$pidfile" )
     sleep 0.5
     pid_of_file "$pidfile" >/dev/null || {
         tail_log "$logfile"
@@ -653,8 +660,10 @@ svc_up() {
     [[ -d $dir ]] || die "No existe el directorio de $label: $dir"
     log "Iniciando $label ($cmd)..."
     notify "Compilando $label…"
+    # {port} en el cmd: se sustituye por el puerto declarado del servicio.
+    [[ -n $port ]] && cmd=${cmd//\{port\}/$port}
     # shellcheck disable=SC2086
-    start_process "$id" "$label" "$dir" $cmd
+    start_process "$id" "$label" "$dir" "$port" $cmd
     if [[ -n $port ]]; then
         wait_for_port "$port" "$(scaled "${wait:-120}")" "$label" || {
             tail_log "$(svc_logfile "$id")"
@@ -1155,6 +1164,139 @@ list_user_projects() {
 }
 
 # Estado resumido de un proyecto (una línea JSON).
+# Primer puerto libre desde uno dado: ni declarado por otro proyecto, ni ocupado.
+pick_free_port() {
+    local from=${1:-3000} p other f
+    for ((p = from + 1; p <= from + 60; p++)); do
+        ((p >= 1024 && p <= 65000)) || continue
+        port_open "$p" && continue
+        other=""
+        for f in $(list_user_projects); do
+            [[ $f == "$CURRENT" ]] && continue
+            if jq -e --argjson p "$p" '[.services[]? | select(.port == $p)] | length > 0' \
+                "$(project_file "$f")" >/dev/null 2>&1; then
+                other=$f
+                break
+            fi
+        done
+        [[ -n $other ]] && continue
+        printf '%s' "$p"
+        return 0
+    done
+    return 1
+}
+
+# Puerto de un servicio: devstack <p> port [<servicio>] [--to N|--auto] [--dry-run] [--force]
+# Le cambia el puerto en el config (port, url y health) y, si el cmd es un
+# `npm run …`, le agrega `-- --port {port}` (lo entienden vite y next), así que
+# se puede correr el mismo repo dos veces o convivir con otro proyecto.
+port_cmd() {
+    local target="" to="" auto="" dry="" force=""
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            --to)
+                shift
+                to=${1:-}
+                ;;
+            --auto) auto=1 ;;
+            --dry-run) dry=1 ;;
+            --force) force=1 ;;
+            -*) die "port: opción desconocida $1" ;;
+            *) target=$1 ;;
+        esac
+        shift
+    done
+
+    local id=$target
+    if [[ -z $id ]]; then
+        # Sin servicio: el que choca con otro proyecto, o el único con puerto.
+        local clash
+        clash=$(port_clashes | awk 'NR == 1 {print $1}' | tr -d ':')
+        if [[ -n $clash ]]; then
+            id=$(jq -r --argjson p "$clash" '.services[] | select(.port == $p) | .id' "$CONFIG_FILE" | head -1)
+        else
+            id=$(jq -r '[.services[] | select((.port // 0) > 0) | .id] | if length == 1 then .[0] else empty end' "$CONFIG_FILE")
+        fi
+        [[ -n $id ]] || die "Decime qué servicio (devstack $CURRENT list)"
+    fi
+    svc_index "$id" >/dev/null || die "No existe el servicio '$id' en $CURRENT"
+
+    local type old new cmd
+    type=$(svc_type "$id")
+    [[ $type == docker ]] && die "El puerto de '$id' lo define su compose: cambialo ahí (devstack sólo lo chequea)"
+    old=$(svc_port "$id")
+    [[ -n $old ]] || die "El servicio '$id' no declara puerto"
+
+    if [[ -n $to ]]; then
+        [[ $to =~ ^[0-9]+$ ]] || die "--to necesita un número"
+        new=$to
+        [[ $new -ge 1024 && $new -le 65000 ]] || die "Fuera de rango: $new"
+        if ((new != old)) && [[ -z $force ]]; then
+            port_open "$new" && die ":$new ya está escuchando (usá --force si igual querés declararlo)"
+            local f
+            for f in $(list_user_projects); do
+                [[ $f == "$CURRENT" ]] && continue
+                jq -e --argjson p "$new" '[.services[]? | select(.port == $p)] | length > 0' \
+                    "$(project_file "$f")" >/dev/null 2>&1 && die ":$new lo declara '$f' (usá --force si querés el mismo)"
+            done
+        fi
+    elif [[ -n $auto || -z $to ]]; then
+        new=$(pick_free_port "${old:-3000}") || die "No encontré un puerto libre cerca de ${old:-3000}"
+    else
+        die "port: pasá --to <n> o --auto"
+    fi
+    ((new != old)) || die "Ya usa :$new"
+
+    # El cmd: {port} si ya lo tiene, el flag por npm si es un `npm run …`, o el
+    # puerto literal si estaba escrito.
+    cmd=$(svc_field "$id" cmd)
+    local cmd_new=$cmd note=""
+    if [[ $cmd == *"{port}"* ]]; then
+        note="cmd ya usa {port}"
+    elif [[ $cmd == *" -- "* || $cmd == *" --port "* ]]; then
+        note="cmd ya pasa un puerto: revisalo"
+    elif [[ $cmd =~ ^(npm|pnpm|yarn|bun|bunx)[[:space:]]+(run[[:space:]]+)?[^[:space:]]+[[:space:]]*$ ]]; then
+        cmd_new="$cmd -- --port {port}"
+    elif [[ $cmd == *":$old"* ]]; then
+        local ph='{port}'
+        cmd_new=${cmd//:$old/:$ph}
+    else
+        note="aviso: el cmd no declara el puerto; devstack le exporta PORT"
+    fi
+
+    local url_new health_new
+    url_new=$(svc_field "$id" url)
+    health_new=$(svc_field "$id" health)
+    [[ -n $url_new ]] && url_new=${url_new//:$old/:$new}
+    [[ -n $health_new ]] && health_new=${health_new//:$old/:$new}
+
+    if [[ -n $dry ]] && [[ ${DEVDATA_DRY_QUIET:-} != 1 ]]; then
+        printf '  %-10s :%s → :%s\n' "$id" "$old" "$new"
+        printf '  %-10s %s\n' cmd "${cmd_new:-$cmd}"
+        [[ -n $note ]] && printf '  %-10s %s\n' nota "$note"
+        return 0
+    fi
+
+    local tmp
+    tmp=$(mktemp)
+    jq --arg id "$id" --argjson port "$new" --arg cmd "$cmd_new" \
+        --arg url "$url_new" --arg health "$health_new" '
+        (.services[] | select(.id == $id)) |= (
+            .port = $port
+            | (if ($url | length) > 0 then .url = $url else . end)
+            | (if ($health | length) > 0 then .health = $health else . end)
+            | (if ($cmd | length) > 0 then .cmd = $cmd else . end)
+        )' "$CONFIG_FILE" >"$tmp" || {
+        rm -f "$tmp"
+        die "No pude reescribir $CONFIG_FILE"
+    }
+    cat "$tmp" >"$CONFIG_FILE"
+    rm -f "$tmp"
+    ok "$id: :$old → :$new"
+    [[ -n $note ]] && log "$note"
+    log "Se aplica al reiniciar: devstack $CURRENT restart $id"
+}
+
 # Puertos declarados por más de un proyecto tuyo: se pisan entre sí (y entonces
 # el "arriba" de uno puede ser el proceso del otro).
 port_clashes() {
@@ -1176,7 +1318,7 @@ project_snapshot() {
         up: ([.services[] | select(.up)] | length),
         total: (.services | length),
         allUp: (([.services[] | select(if .health != "" then .healthy else .up end)] | length) == (.services | length)),
-        services: [.services[] | {id: .id, label: .label, port: .port, up: .up, healthy: .healthy}]}'
+        services: [.services[] | {id: .id, label: .label, type: .type, port: .port, up: .up, healthy: .healthy, managed: .managed}]}'
 }
 
 # devstack all [json|status|up|down]
@@ -1395,7 +1537,7 @@ usage() {
 
 # ---------------------------------------------------------------- dispatch
 
-KNOWN_COMMANDS=" up down restart status json logs open task list menu init use find --running --up --foreign "
+KNOWN_COMMANDS=" up down restart status json logs open task list menu init use find port --running --up --foreign "
 
 [[ $# -gt 0 ]] || {
     list_projects
@@ -1470,6 +1612,7 @@ case "$CMD" in
     task) run_task "${1:-}" ;;
     list) list_all ;;
     menu) menu_block "${1:-dev}" ;;
+    port) port_cmd "$@" ;;
     --running)
         rc=0
         for id in $(svc_ids); do

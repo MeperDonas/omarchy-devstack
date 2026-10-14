@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "meperdonas.devstack",
   "name": "devstack",
-  "version": "1.8.1",
+  "version": "1.9.0",
   "author": "Santiago Villabona (MeperDonas)",
   "license": "MIT",
   "description": "One bar icon per local dev stack: lift, watch and drop docker services and dev servers, in order, with a four-colour state, a take-over button for ports held by stray processes, and a detector that proposes the stack of any repository.",

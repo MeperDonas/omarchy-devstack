@@ -105,6 +105,19 @@ Panel {
   readonly property bool stuck: stuckPolls >= stuckAfterPolls && services.some(function (s) {
     return s.health !== "" && s.up && !s.healthy
   })
+  // Servicios de un proyecto que responden pero no son de devstack: el puerto
+  // lo tiene otro (típicamente el mismo puerto que declara otro proyecto), así
+  // que "arriba" no significa que ese stack esté levantado.
+  function foreignCount(p) {
+    var svcs = p.services || []
+    var n = 0
+    for (var i = 0; i < svcs.length; i++) {
+      var s = svcs[i]
+      if (s.up && s.managed === false && s.type !== "docker") n++
+    }
+    return n
+  }
+
   // Puertos que comparto con otro proyecto declarado (el "arriba" de uno puede
   // ser el proceso del otro).
   readonly property var clashPorts: {
@@ -642,7 +655,10 @@ Panel {
               height: 7
               radius: 3.5
               anchors.verticalCenter: parent.verticalCenter
-              color: modelData.allUp ? root.colorOk : (modelData.up > 0 ? root.colorWorking : root.colorOff)
+              // Ámbar si lo que responde no es de devstack: así no se confunde
+              // "alguien atiende el puerto" con "mi stack está arriba".
+              color: modelData.allUp ? (root.foreignCount(modelData) > 0 ? root.colorWorking : root.colorOk)
+                : (modelData.up > 0 ? root.colorWorking : root.colorOff)
             }
             Text {
               text: modelData.name
@@ -657,7 +673,8 @@ Panel {
             }
             Text {
               text: modelData.up + "/" + modelData.total
-              color: modelData.allUp ? root.colorOk : (modelData.up > 0 ? root.colorWorking : root.colorOff)
+              color: modelData.allUp ? (root.foreignCount(modelData) > 0 ? root.colorWorking : root.colorOk)
+                : (modelData.up > 0 ? root.colorWorking : root.colorOff)
               font.family: bar ? bar.fontFamily : "monospace"
               font.pixelSize: 10
               anchors.verticalCenter: parent.verticalCenter
@@ -815,7 +832,8 @@ Panel {
           model: root.services
 
           Chip {
-            label: modelData.label + ((modelData.type !== "docker" && modelData.up && !modelData.managed) ? " ·ext" : "")
+            label: modelData.label + (modelData.port > 0 ? " :" + modelData.port : "")
+              + ((modelData.type !== "docker" && modelData.up && !modelData.managed) ? " ·ajeno" : "")
             lit: modelData.health !== "" ? modelData.healthy : modelData.up
             accent: root.svcColor(modelData)
           }
@@ -831,6 +849,22 @@ Panel {
         wrapMode: Text.WordWrap
         font.family: bar ? bar.fontFamily : "monospace"
         font.pixelSize: 10
+      }
+
+      // La salida: le mueve el puerto a este proyecto (elige uno libre, lo
+      // escribe en url/health/cmd y reinicia). En un terminal para que veas qué
+      // puerto eligió y qué reescribió.
+      Row {
+        anchors.horizontalCenter: parent.horizontalCenter
+        visible: root.hasClash
+        spacing: 8
+        ActionButton {
+          wide: true
+          label: "Mover el puerto :" + (root.clashPorts[0] || "")
+          icon: "󰒓"
+          enabled: !root.starting
+          onTriggered: root.runInTerminal(cli + projectArg + " port --auto && " + cli + projectArg + " restart")
+        }
       }
 
       Row {

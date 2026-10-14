@@ -234,7 +234,26 @@ row's `▶`/`⏻` button lifts or drops just that project.
 Two of your projects declaring the same port is warned about in `devstack all status`,
 and the widget shows it under the service chips (`:3000 compartido con otro proyecto`)
 — the one listening may be the other project's process, so a stack can look "up" when
-what answers is its neighbour.
+what answers is its neighbour. The chips carry their port and mark `·ajeno` when the
+process answering is not devstack's, and a project row goes amber in that case instead
+of green.
+
+The way out is a port that devstack hands to the service, so two stacks can coexist:
+
+```bash
+devstack meperpos port web --auto     # pick a free port, write port/url/health/cmd
+devstack meperpos port web --to 3050  # or a specific one
+devstack meperpos port web --dry-run  # show what it would change
+```
+
+`--auto` skips ports declared by your other projects and ports in use, and `port`
+rewrites three things so the app actually listens where devstack looks: the `port`
+itself, `url`/`health` if they carried the old one, and the `cmd` — `npm run dev`
+becomes `npm run dev -- --port {port}`, which both Vite and Next understand. Devstack
+also exports `PORT` (and `DEVDATA_PORT`) to every process service, so a `{port}` in
+your command or a framework that reads `PORT` just works. For a docker service the
+host port comes from its compose, so `port` refuses and says so. The popup shows a
+**Mover el puerto :3000** button whenever there is a clash.
 
 A service that is listening but never answers the health check is reported as
 `Servicio sin responder` and the "lifting" state is dropped there: without that,
@@ -426,7 +445,18 @@ entero a cualquier invocación del CLI con el ajuste `command`.
 **Ojo con los puertos.** Si dos de tus proyectos declaran el mismo puerto,
 `devstack all status` lo avisa y el widget lo muestra bajo los chips (*:3000
 compartido con otro proyecto*): el que escucha puede ser el proceso del otro, así
-que un stack puede verse "arriba" cuando el que contesta es el vecino.
+que un stack puede verse "arriba" cuando el que contesta es el vecino. Los chips
+llevan su puerto y marcan *·ajeno* cuando el proceso **no es de devstack**, y la
+fila del proyecto se pone ámbar en ese caso en vez de verde.
+
+La salida es un puerto que devstack le pasa al servicio, para que dos stacks
+convivan: `devstack meperpos port web --auto` (elige uno libre y reescribe
+`port`, `url`/`health` y el `cmd` → `npm run dev -- --port {port}`, que entienden
+vite y next), `--to 3050` para uno concreto, `--dry-run` para verlo antes.
+Devstack además exporta `PORT` (y `DEVDATA_PORT`) a cada servicio de proceso, así
+que `{port}` en el cmd o un framework que lea `PORT` funciona directo. En un
+servicio docker el puerto lo define su compose, así que `port` se niega y lo dice.
+El popup muestra un botón **Mover el puerto :3000** cuando hay choque.
 
 **Buscar en vez de esperar.** El botón *Buscar proyectos* del popup corre
 `devstack find`: recorre tus carpetas (`~/Projects` por defecto; `DEVDATA_SEARCH_ROOTS`
