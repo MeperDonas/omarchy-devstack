@@ -784,7 +784,7 @@ Panel {
         anchors.horizontalCenter: parent.horizontalCenter
         visible: root.searching
         spacing: 8
-        ActionButton { label: root.findRunning ? "Buscando…" : "Buscar de nuevo"; icon: "󰍉"; enabled: !root.findRunning; onTriggered: root.findProjects() }
+        ActionButton { wide: true; label: root.findRunning ? "Buscando…" : "Buscar de nuevo"; icon: "󰍉"; enabled: !root.findRunning; onTriggered: root.findProjects() }
       }
 
       Column {
@@ -844,9 +844,9 @@ Panel {
               Text {
                 text: modelData.label !== undefined ? modelData.label : modelData.suggested
                 width: parent.width - 92
-                // Por el medio: en rutas lo que identifica está en los dos
-                // extremos ("Proyecto de Grado/…-inventario-app").
-                elide: Text.ElideMiddle
+                // Los nombres ya vienen cortos (la carpeta) y la ruta sólo
+                // cuando hay dos iguales: un corte al final no rompe palabras.
+                elide: Text.ElideRight
                 color: bar ? bar.foreground : "white"
                 font.family: bar ? bar.fontFamily : "monospace"
                 font.pixelSize: 11
@@ -876,7 +876,7 @@ Panel {
         anchors.horizontalCenter: parent.horizontalCenter
         visible: root.searching
         spacing: 8
-        ActionButton { label: "Volver"; icon: "󰁍"; onTriggered: root.searching = false }
+        ActionButton { wide: true; label: "Volver"; icon: "󰁍"; onTriggered: root.searching = false }
       }
 
       Row {

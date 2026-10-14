@@ -40,9 +40,9 @@ json=$("$DEVSTACK" find "$tmp/root" --json)
 
 [[ $(printf '%s' "$json" | jq 'length') == 4 ]] && ok "encuentra los 4 repos (y no las subcarpetas ni .next)" \
     || bad "encuentra los 4 repos (y no las subcarpetas ni .next)"
-[[ $(printf '%s' "$json" | jq -r '.[] | select(.suggested == "caja-servicio") | .label') == "caja/servicio" ]] \
-    && ok "el stack anidado se etiqueta con su ruta" || bad "el stack anidado se etiqueta con su ruta"
-[[ $(printf '%s' "$json" | jq -r '[.[].suggested] | sort | join(",")') == "caja-servicio,dos-proyecto,tres,uno" ]] \
+[[ $(printf '%s' "$json" | jq -r '.[] | select(.suggested == "servicio") | .label') == "servicio" ]] \
+    && ok "el stack anidado usa el nombre de su carpeta" || bad "el stack anidado usa el nombre de su carpeta"
+[[ $(printf '%s' "$json" | jq -r '[.[].suggested] | sort | join(",")') == "dos-proyecto,servicio,tres,uno" ]] \
     && ok "sugiere un nombre por carpeta (y el del proyecto si ya está declarado)" || bad "sugiere un nombre por carpeta"
 [[ $(printf '%s' "$json" | jq -r '.[] | select(.suggested == "dos-proyecto") | .declared') == true ]] \
     && ok "marca declarado al que ya lo está (aunque el nombre no coincida)" || bad "marca declarado al que ya lo está"
@@ -50,6 +50,18 @@ json=$("$DEVSTACK" find "$tmp/root" --json)
     && ok "cuenta los servicios docker" || bad "cuenta los servicios docker"
 [[ $(printf '%s' "$json" | jq -r '.[0].declared') == true ]] \
     && ok "los declarados van primero" || bad "los declarados van primero"
+
+# Dos carpetas con el mismo nombre en raíces distintas: la ruta desambigua.
+mkdir -p "$tmp/raiz-a/front" "$tmp/raiz-b/front"
+for r in raiz-a raiz-b; do
+    printf '{"services":{"db":{"image":"postgres:16"},"web":{"image":"node:22"}}}\n' >"$tmp/$r/front/docker-compose.yml"
+done
+dup=$("$DEVSTACK" find "$tmp/raiz-a" "$tmp/raiz-b" --json)
+[[ $(printf '%s' "$dup" | jq -r '[.[].label] | unique | length') == 2 ]] \
+    && ok "dos carpetas homónimas no se confunden" || {
+    bad "dos carpetas homónimas no se confunden"
+    printf '       labels: %s\n' "$(printf '%s' "$dup" | jq -c '[.[].label]')" >&2
+}
 [[ $(printf '%s' "$json" | jq -r '.[] | select(.suggested == "nada") | .suggested') == "" ]] \
     && ok "no inventa proyectos donde no hay stack" || bad "no inventa proyectos donde no hay stack"
 [[ $(printf '%s' "$json" | jq -r '.[] | select(.suggested == "dos-proyecto") | .services | length') -ge 1 ]] \

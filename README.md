@@ -200,7 +200,10 @@ And when you would rather go looking yourself, the popup has a **Buscar proyecto
 button: it runs `devstack find`, which walks your project folders (`~/Projects` by
 default; `DEVDATA_SEARCH_ROOTS` with `:` for more, `--depth` for deeper trees) and
 lists every repo with a stack it can recognise — the ones you already declared first,
-with their live state. Candidates are labelled with their path inside the search root
+with their live state. Candidates are labelled with the folder name when it is not repeated, and with their
+path inside the search root when it is (`backend` from two different repos still tells
+them apart; `Proyecto de Grado/gestion-inventario-app` shows up as
+`gestion-inventario-app`)
 (`MeperPOS-loans-module`, `Proyecto de Grado/gestion-inventario-app`), so two `backend`
 folders never look the same; a directory whose stack is already covered by its parent
 is not offered again. Clicking a declared one lifts it (and pins it); clicking one
