@@ -697,7 +697,7 @@ json_status() {
 
 status() {
     printf '%s — %s\n' "$DEVDATA_NAME" "$DIR"
-    local id port health label type st owner
+    local id port health label type st owner cname
     for id in $(svc_ids); do
         label=$(svc_label "$id")
         port=$(svc_port "$id")
@@ -713,7 +713,10 @@ status() {
             st="escuchando"
         fi
         if [[ $type == docker ]]; then
-            st="$st (contenedor: $(container_status "$id"))"
+            # El contenedor puede ser ajeno (ya estaba arriba): sin nombre no se
+            # muestra el paréntesis, que quedaba como "(contenedor: )".
+            cname=$(container_status "$id")
+            [[ -n $cname ]] && st="$st (contenedor: $cname)"
         elif managed_process "$id"; then
             st="$st (gestionado, pid $(<"$(svc_pidfile "$id")"))"
         else
