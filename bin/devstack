@@ -162,14 +162,14 @@ http_ok() { [[ "$(http_code "$1" "${2:-2}")" =~ ^[23] ]]; }
 
 # Un servicio que muere porque falta instalar dependencias es el error más común
 # al declarar un repo recién clonado; el log lo dice, así que se lo traducimos.
-hint_dependencies() {
+dependency_hint() {
     local id=$1 dir=$2 log
     log=$(svc_logfile "$id")
     [[ -r $log ]] || return 0
     grep -qE "command not found|MODULE_NOT_FOUND|Cannot find module|failed to run command" "$log" || return 0
     [[ -r $dir/package.json ]] || return 0
     [[ -d $dir/node_modules ]] && return 0
-    warn "Parece que faltan dependencias en $dir: probá 'npm install'"
+    printf 'faltan dependencias: probá "npm install" en %s' "$dir"
 }
 
 pid_of_file() {
@@ -578,9 +578,11 @@ start_process() {
     ( cd "$dir" || exit 1; PORT="$port" DEVDATA_PORT="$port" setsid nohup "$@" >>"$logfile" 2>&1 & echo $! >"$pidfile" )
     sleep 0.5
     pid_of_file "$pidfile" >/dev/null || {
+        local hint
+        hint=$(dependency_hint "$id" "$dir")
         tail_log "$logfile"
-        hint_dependencies "$id" "$dir"
-        die "$label no arrancó"
+        [[ -n $hint ]] && warn "$hint"
+        die "$label no arrancó${hint:+ — $hint}"
     }
     log "$label iniciado (pid $(<"$pidfile")) → $logfile"
 }

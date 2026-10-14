@@ -276,6 +276,13 @@ Panel {
         root.declared = true
         if (root.pending === "up" && root.everythingUp) root.pending = ""
         if (root.pending !== "" && root.pendingSeconds >= root.pendingTimeout) root.pending = ""
+      // Red de seguridad: si un servicio está arriba sin responder hace rato, la
+      // acción no está progresando; se suelta el "levantando" (la acción sigue,
+      // sólo se libera la UI).
+      else if (root.pending !== "" && root.stuck && root.pendingSeconds >= root.stuckAfterPolls * 25) {
+        root.failure = "no terminó de levantar (mirá los logs)"
+        root.pending = ""
+      }
       // El CLI deja su resultado al terminar (result.json): si la acción ya
       // acabó, se acabó el "levantando" — y si falló, se dice por qué.
       var lr = data.lastResult

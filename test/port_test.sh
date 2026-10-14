@@ -91,6 +91,18 @@ jq '(.services[] | select(.id == "web")) |= (.cmd = "exit 1" | .wait = 2)' "$CFG
     && ok "json trae el resultado de la acción (para no quedarse levantando)" \
     || bad "json trae el resultado de la acción"
 
+# Un servicio que muere por una dependencia faltante: el mensaje (y la
+# notificación) tienen que decir qué hacer, no sólo "no arrancó".
+mkdir -p "$tmp/sin-deps"
+printf '{"scripts":{"dev":"next dev"}}\n' >"$tmp/sin-deps/package.json"
+printf '{"name":"deps","dir":"%s/sin-deps","services":[{"id":"web","label":"web","type":"process","dir":"","cmd":"next dev","port":4411,"wait":2}]}\n' \
+    "$tmp" >"$tmp/xdg/devstack/deps.json"
+out=$("$DEVSTACK" deps up 2>&1 || true)
+printf '%s' "$out" | grep -q 'npm install' && ok "el error dice qué hacer (npm install)" \
+    || { bad "el error dice qué hacer (npm install)"; printf '       %s\n' "$out" >&2; }
+"$DEVSTACK" deps json | jq -e '.lastResult.ok == false and (.lastResult.detail | test("npm install"))' >/dev/null \
+    && ok "y el json lo lleva para el widget" || bad "y el json lo lleva para el widget"
+
 if ((fail)); then
     printf '\033[1;31mport: hay fallos\033[0m\n' >&2
     exit 1
