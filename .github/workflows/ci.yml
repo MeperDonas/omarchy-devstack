@@ -50,6 +50,9 @@ jobs:
       - name: Home project (`devstack use`)
         run: ./test/use_test.sh
 
+      - name: Project finder (`devstack find`)
+        run: ./test/find_test.sh
+
   smoke:
     runs-on: ubuntu-24.04
     steps:

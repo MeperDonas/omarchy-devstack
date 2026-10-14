@@ -33,6 +33,8 @@
 #   devstack here [cmd] [--window] [--fallback <p>] [--default]
 #                                     el proyecto de la terminal activa (--window) o del
 #                                     $PWD, y reenvía ahí cmd: status, up, down, logs…
+#   devstack find [DIR...] [--json]   busca en tus carpetas los repos con stack
+#                                     detectable (no escribe nada)
 #   devstack use [<p>|--clear]        proyecto de casa: el que se usa cuando no hay
 #                                     otro (el widget lo usa si la terminal no está
 #                                     en ningún proyecto declarado)
@@ -222,6 +224,90 @@ use_cmd() {
     mkdir -p "$USER_CONFIG_DIR"
     printf '%s\n' "$want" >"$f"
     ok "Proyecto de casa: $want (el widget lo usa cuando no reconoce la terminal)"
+}
+
+# devstack find [DIR...] [--json] [--depth N]
+# Busca en tus carpetas de proyectos los repos que devstack podría levantar:
+# nombre, ruta, si ya está declarado y cuántos servicios salen. No escribe nada
+# (para declarar uno: `devstack add <dir>`). Es la versión "elegí vos" del
+# detector: la lista de candidatos que el widget muestra al buscar.
+find_cmd() {
+    local roots=() opt="" depth=2
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            --json) opt=--json ;;
+            --depth)
+                shift
+                depth=${1:-2}
+                ;;
+            -*) die "find: opción desconocida $1" ;;
+            *) roots+=("$1") ;;
+        esac
+        shift
+    done
+    if ((${#roots[@]} == 0)); then
+        # DEVDATA_SEARCH_ROOTS con ':' separa varias carpetas.
+        IFS=':' read -r -a roots <<<"${DEVDATA_SEARCH_ROOTS:-$HOME/Projects}"
+    fi
+    require_scan
+    local root dir json rows="[]" entry name declared p candidates=() prev
+    for root in "${roots[@]}"; do
+        [[ -d $root ]] || continue
+        while IFS= read -r dir; do
+            # Si ya acepté la carpeta madre, sus hijos no son otro proyecto
+            # (backend/frontend de un monorepo, .next, node_modules…).
+            for prev in ${candidates[@]+"${candidates[@]}"}; do
+                [[ $dir == "$prev"/* ]] && continue 2
+            done
+            looks_like_repo "$dir" || continue
+            candidates+=("$dir")
+            json=$(scan_project_json "$dir" "" 2>/dev/null | grep -v '^#') || continue
+            [[ -n $json ]] || continue
+            name=$(sanitize_name "$(basename "$dir")")
+            declared=""
+            if project_file "$name" >/dev/null 2>&1; then
+                declared=$name
+            else
+                # Un proyecto puede estar declarado con otro nombre y el mismo dir.
+                while IFS= read -r p; do
+                    [[ -n $p ]] || continue
+                    if [[ $(jq -r '.dir // ""' "$(project_file "$p")" 2>/dev/null) == "$dir" ]]; then
+                        declared=$p
+                        break
+                    fi
+                done < <(list_user_projects)
+            fi
+            entry=$(printf '%s' "$json" | jq -c --arg dir "$dir" --arg p "$name" --arg d "$declared" \
+                '{name: (.name // $p), dir: $dir, suggested: $p, declared: ($d != ""), project: $d,
+                  services: [.services[]? | {id: .id, label: .label, type: .type, port: .port}],
+                  docker: ([.services[]? | select(.type == "docker")] | length)}')
+            # Si ya está declarado, el renglón necesita su estado (up/total).
+            if [[ -n $declared ]]; then
+                entry=$(printf '%s' "$entry" | jq -c --argjson s "$(project_snapshot "$declared" 2>/dev/null || printf '{}')" \
+                    '. + {up: ($s.up // 0), total: ($s.total // 0), allUp: ($s.allUp // false)}')
+            fi
+            rows=$(printf '%s' "$rows" | jq -c --argjson e "$entry" '. + [$e]')
+        done < <(find "$root" -mindepth 1 -maxdepth "$depth" -type d \
+            -not -path '*/.git*' -not -path '*/node_modules*' -not -path '*/dist*' \
+            -not -path '*/.next*' -not -path '*/build*' -not -path '*/target*' \
+            -not -path '*/vendor*' -not -path '*/.venv*' -not -path '*/__pycache__*' 2>/dev/null | sort)
+    done
+    # Los que ya tenés declarados primero (son los que podés levantar ya mismo),
+    # después por nombre.
+    rows=$(printf '%s' "$rows" | jq -c 'sort_by([(if .declared then 0 else 1 end), (.suggested // "")])')
+    if [[ $opt == --json ]]; then
+        printf '%s\n' "$rows"
+        return 0
+    fi
+    if [[ $(printf '%s' "$rows" | jq 'length') -eq 0 ]]; then
+        warn "No encontré repos con stack en: ${roots[*]}"
+        return 1
+    fi
+    printf '%s' "$rows" | jq -r '.[] |
+        [(if .declared then "declarado" else "sin declarar" end), .suggested,
+         ((.services | length) | tostring), (if .docker > 0 then "docker" else "" end), .dir] | @tsv' \
+        | column -t -s$'\t'
+    printf '\nPara declarar uno: devstack add <ruta>  ·  para levantarlo ya: devstack add <ruta> && devstack <nombre> up\n'
 }
 
 resolve_project() {
@@ -1203,7 +1289,7 @@ usage() {
 
 # ---------------------------------------------------------------- dispatch
 
-KNOWN_COMMANDS=" up down restart status json logs open task list menu init use --running --up --foreign "
+KNOWN_COMMANDS=" up down restart status json logs open task list menu init use find --running --up --foreign "
 
 [[ $# -gt 0 ]] || {
     list_projects
@@ -1236,6 +1322,10 @@ case "$1" in
         ;;
     use)
         use_cmd "${2:-}"
+        exit 0
+        ;;
+    find)
+        find_cmd "${@:2}"
         exit 0
         ;;
     all)

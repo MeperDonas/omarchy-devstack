@@ -186,6 +186,20 @@ devstack use meperpos   # make it this one
 devstack use --clear    # forget it: back to the focused terminal
 ```
 
+And when you would rather go looking yourself, the popup has a **Buscar proyectos**
+button: it runs `devstack find`, which walks your project folders (`~/Projects` by
+default; `DEVDATA_SEARCH_ROOTS` with `:` for more, `--depth` for deeper trees) and
+lists every repo with a stack it can recognise — the ones you already declared first,
+with their live state. Clicking a declared one lifts it (and pins it); clicking one
+that is not declared yet declares it *and* lifts it in a terminal, so you see what
+the detector inferred before anything is written.
+
+```bash
+devstack find                      # repos with a stack in ~/Projects (writes nothing)
+devstack find --json               # the same, machine-readable (what the widget reads)
+devstack find ~/code ~/work --depth 3
+```
+
 For something permanent, use `mode: fixed` plus `project` in the widget entry, or
 point the whole widget at any CLI invocation with the `command` setting
 (`command: "DEVDATA_CONFIG=/tmp/lab devstack"`).
@@ -395,6 +409,14 @@ así sobrevive al reinicio del shell y el CLI queda de acuerdo con la barra
 (`devstack use`, `devstack use meperpos`, `devstack use --clear`). Para algo
 permanente: `mode: fixed` + `project` en la entrada del widget, o apuntá el widget
 entero a cualquier invocación del CLI con el ajuste `command`.
+
+**Buscar en vez de esperar.** El botón *Buscar proyectos* del popup corre
+`devstack find`: recorre tus carpetas (`~/Projects` por defecto; `DEVDATA_SEARCH_ROOTS`
+con `:` para varias, `--depth` para bajar más) y lista cada repo con stack
+reconocible — primero los que ya declaraste, con su estado en vivo. Un click en uno
+declarado lo levanta (y lo fija); en uno sin declarar, lo declara *y* lo levanta en
+una terminal, así ves lo que propone el detector antes de que escriba nada.
+`devstack find --json` es lo que lee el widget.
 
 **Todos a la vista.** `devstack all status|json|up|down` resume tus proyectos
 (arriba/total por proyecto) y con `mode: all` el icono de la barra muestra el

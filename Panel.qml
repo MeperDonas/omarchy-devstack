@@ -58,6 +58,10 @@ Panel {
   // Lista de proyectos para el selector (sólo se pide al abrir el popup: en
   // `auto` el sondeo normal trae un proyecto, no la lista).
   property var projectList: []
+  // Buscador: `devstack find` recorre tus carpetas y devuelve candidatos.
+  property var found: []
+  property bool searching: false
+  property bool findRunning: false
   // Proyecto fijado a mano: sin pin el widget sigue el foco de la terminal.
   property string pinned: ""
   // Firma de lo último aplicado: cada 5 s llega el mismo JSON y reasignar
@@ -133,7 +137,7 @@ Panel {
     : stuck && pending === "" ? "Servicio sin responder"
     : allUp ? (services.every(function (s) { return s.health === "" || s.healthy }) ? "Arriba" : "Arriba · compilando")
     : anyUp ? "Parcial · falta " + missingText
-    : "Detenido") + (!allMode && pinned !== "" ? " · fijado" : "")
+    : "Detenido") + (allMode ? "" : pinned !== "" ? " · fijado" : fallbackUsed ? " · por defecto" : "")
 
   function svcColor(s) {
     if (s.health !== "") return s.healthy ? colorOk : (s.up ? (stuck ? colorError : colorWorking) : colorOff)
@@ -287,6 +291,23 @@ Panel {
     }
   }
 
+  Process {
+    id: findProbe
+    command: ["/bin/bash", "-lc", root.cli + " find --json"]
+    stdout: StdioCollector { id: findOutput }
+    onRunningChanged: root.findRunning = running
+    onExited: {
+      var data = null
+      try {
+        data = JSON.parse(String(findOutput.text || ""))
+      } catch (error) {
+        data = null
+      }
+      root.found = data && data.length ? data : []
+      root.findRunning = false
+    }
+  }
+
   function refreshList() {
     if (root.allMode || listProbe.running) return
     listProbe.running = true
@@ -296,16 +317,46 @@ Panel {
   // el foco (o vuelve a seguirlo). El pin se guarda también en el CLI
   // (`devstack use`), así sobrevive al reinicio del shell y el CLI queda de
   // acuerdo con lo que muestra la barra.
+  function pinProject(project) {
+    if (root.allMode || !project) return
+    root.pinned = project
+    bar.run("DEVDATA_NOTIFY=off " + cli + " use " + project)
+    refresh()
+  }
+
+  function unpinProject() {
+    if (root.pinned === "") return
+    root.pinned = ""
+    bar.run("DEVDATA_NOTIFY=off " + cli + " use --clear")
+    refresh()
+  }
+
   function togglePin(project) {
     if (root.allMode || !project) return
-    if (root.pinned === project) {
-      root.pinned = ""
-      bar.run("DEVDATA_NOTIFY=off " + cli + " use --clear")
-    } else {
-      root.pinned = project
-      bar.run("DEVDATA_NOTIFY=off " + cli + " use " + project)
+    if (root.pinned === project) root.unpinProject()
+    else root.pinProject(project)
+  }
+
+  // Buscar proyectos a mano: recorre tus carpetas (devstack find) y ofrece lo
+  // que se puede levantar, sin depender de la lectura automática.
+  function findProjects() {
+    root.searching = true
+    root.found = []
+    if (!findProbe.running) findProbe.running = true
+  }
+
+  // Elegir un candidato: si ya está declarado se levanta/baja y queda fijado; si
+  // no, se declara y se levanta en una terminal para que veas lo que propone el
+  // detector antes de que escriba nada por vos.
+  function pickFound(candidate) {
+    if (!candidate) return
+    if (candidate.declared) {
+      root.searching = false
+      root.pinProject(candidate.project)
+      root.runCommand(cli + " " + candidate.project + " " + (candidate.up > 0 ? "down" : "up"))
+      return
     }
-    refresh()
+    root.runInTerminal(cli + " add \"" + candidate.dir + "\" && " + cli + " " + candidate.suggested + " up")
   }
 
   onOpenedChanged: if (opened) { refresh(); refreshList() }
@@ -326,7 +377,13 @@ Panel {
     interval: (root.starting && root.pendingSeconds < 60 ? 2 : root.refreshInterval) * 1000
     repeat: true
     running: true
-    onTriggered: root.refresh()
+    onTriggered: {
+      root.refresh()
+      // Con el popup abierto, los renglones de proyectos también se refrescan
+      // (si no, quedaban con el estado de cuando lo abriste: "1/3" con todo
+      // levantado).
+      if (root.opened) root.refreshList()
+    }
   }
 
   Component.onCompleted: refresh()
@@ -372,7 +429,10 @@ Panel {
       id: mouse
       anchors.fill: parent
       hoverEnabled: true
-      onClicked: root.toggle()
+      onClicked: {
+        root.toggle()
+        if (root.opened) root.refreshList()
+      }
       onEntered: if (bar) bar.showTooltip(mouse, (root.name !== "" ? root.name + " · " : "") + root.stateText + (root.fallbackUsed ? " · por defecto" : ""))
       onExited: if (bar) bar.hideTooltip(mouse)
     }
@@ -514,7 +574,7 @@ Panel {
       // Un renglón por proyecto: en `all` es el contenido; en `auto`/`fixed`
       // es el selector (un click fija ese proyecto, otro click vuelve al foco).
       Column {
-        visible: root.showRows
+        visible: root.showRows && !root.searching
         width: contentColumn.width
         spacing: 5
 
@@ -583,9 +643,114 @@ Panel {
       // Con un proyecto fijado, volver a seguir el foco de la terminal.
       Row {
         anchors.horizontalCenter: parent.horizontalCenter
-        visible: !root.allMode && root.pinned !== ""
+        visible: !root.allMode && root.pinned !== "" && !root.searching
         spacing: 8
-        ActionButton { label: "Seguir el foco"; icon: "󰁔"; onTriggered: root.togglePin(root.pinned) }
+        ActionButton { label: "Seguir el foco"; icon: "󰁔"; onTriggered: root.unpinProject() }
+      }
+
+      // Buscar en tus carpetas: la lista de candidatos, sin depender del foco.
+      Row {
+        anchors.horizontalCenter: parent.horizontalCenter
+        visible: !root.searching
+        spacing: 8
+        ActionButton { label: "Buscar proyectos"; icon: "󰍉"; onTriggered: root.findProjects() }
+      }
+
+      Row {
+        anchors.horizontalCenter: parent.horizontalCenter
+        visible: root.searching
+        spacing: 8
+        ActionButton { label: root.findRunning ? "Buscando…" : "Buscar de nuevo"; icon: "󰍉"; enabled: !root.findRunning; onTriggered: root.findProjects() }
+      }
+
+      Column {
+        visible: root.searching
+        width: contentColumn.width
+        spacing: 4
+
+        Text {
+          width: parent.width
+          horizontalAlignment: Text.AlignHCenter
+          text: root.found.length > 0 ? root.found.length + " proyectos con stack" : (root.findRunning ? "" : "No encontré nada en tus carpetas")
+          color: bar ? bar.foreground : "white"
+          font.family: bar ? bar.fontFamily : "monospace"
+          font.pixelSize: 10
+        }
+
+        ListView {
+          width: parent.width
+          height: Math.min(contentHeight, 200)
+          spacing: 4
+          clip: true
+          model: root.found
+          boundsBehavior: Flickable.StopAtBounds
+
+          delegate: Item {
+            width: contentColumn.width
+            height: 22
+
+            required property var modelData
+
+            Rectangle {
+              anchors.fill: parent
+              radius: 4
+              color: foundHover.containsMouse ? Qt.rgba(1, 1, 1, 0.07) : "transparent"
+            }
+
+            MouseArea {
+              id: foundHover
+              anchors.fill: parent
+              hoverEnabled: true
+              cursorShape: Qt.PointingHandCursor
+              onClicked: root.pickFound(modelData)
+            }
+
+            Row {
+              anchors.fill: parent
+              spacing: 6
+
+              Rectangle {
+                width: 7
+                height: 7
+                radius: 3.5
+                anchors.verticalCenter: parent.verticalCenter
+                color: modelData.declared ? (modelData.allUp ? root.colorOk : (modelData.up > 0 ? root.colorWorking : root.colorOff)) : root.colorWorking
+              }
+
+              Text {
+                text: modelData.suggested
+                width: parent.width - 120
+                elide: Text.ElideRight
+                color: bar ? bar.foreground : "white"
+                font.family: bar ? bar.fontFamily : "monospace"
+                font.pixelSize: 11
+                font.bold: modelData.declared
+                anchors.verticalCenter: parent.verticalCenter
+              }
+
+              Text {
+                text: modelData.declared ? modelData.up + "/" + modelData.total : modelData.services.length + " serv."
+                color: root.colorOff
+                font.family: bar ? bar.fontFamily : "monospace"
+                font.pixelSize: 10
+                anchors.verticalCenter: parent.verticalCenter
+              }
+
+              ActionButton {
+                compact: true
+                icon: modelData.declared && modelData.up > 0 ? "󰍃" : "󰐊"
+                onTriggered: root.pickFound(modelData)
+              }
+            }
+          }
+        }
+      }
+
+      Row {
+        anchors.horizontalCenter: parent.horizontalCenter
+        visible: root.searching
+        spacing: 8
+        ActionButton { label: "Volver"; icon: "󰁍"; onTriggered: root.searching = false }
       }
 
       Row {
