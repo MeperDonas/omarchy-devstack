@@ -37,6 +37,14 @@ json=$("$DEVSTACK" all json)
 [[ $(printf '%s' "$json" | jq -r '.[] | select(.project=="uno") | .services[] | select(.id=="db") | .port') == 5432 ]] \
     && ok "el json trae el puerto de cada servicio" || bad "el json trae el puerto de cada servicio"
 
+# Cada proyecto trae el resultado de su última acción (la fila lo usa para
+# mostrar "levantando…" y soltarse cuando el CLI termina).
+printf '{"name":"uno","dir":"%s","services":[{"id":"web","label":"web","type":"process","dir":"","cmd":"exit 1","port":4421,"wait":2}]}\n' \
+    "$tmp" >"$tmp/xdg/devstack/uno.json"
+"$DEVSTACK" uno up >/dev/null 2>&1 || true
+"$DEVSTACK" all json | jq -e '.[] | select(.project=="uno") | .lastResult.ok == false' >/dev/null \
+    && ok "cada proyecto trae el resultado de su última acción" || bad "cada proyecto trae su último resultado"
+
 # Sin puertos repetidos, el aviso no aparece.
 rm "$tmp/xdg/devstack/dos.json"
 "$DEVSTACK" all status 2>&1 | grep -q "puertos compartidos" && bad "sin repetidos no avisa" || ok "sin repetidos no avisa"

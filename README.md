@@ -181,7 +181,12 @@ Resolution is a short chain and every step is a manual override:
    so you can pick one.
 
 You never have to leave the bar: **click a row** in the popup to pin that project (the
-widget stops following the terminal) and **Seguir el foco** to go back. The pin is
+widget stops following the terminal) and **Seguir el foco** to go back. Pressing a
+button no longer closes the popup (you watch the lift happen; `closeAfterAction: true`
+in the widget entry brings the old behaviour back), and a row whose own ▶/⏻ button
+started something shows *levantando…* exactly like the big button does. While the
+finder is open the popup shows only the finder — no service chips and no project
+buttons competing for the screen. The pin is
 stored with `devstack use`, so it survives a shell restart and the CLI agrees with
 what the bar shows:
 
@@ -439,6 +444,12 @@ se actualiza con `omarchy plugin update` y se configura desde los ajustes de
 Omarchy. Para probarlo sin docker ni node: `DEVDATA_CONFIG="$PWD/config"
 DEVDATA_PROJECT=demo bin/devstack demo up` (levanta un `python3 -m http.server`).
 Desinstalar: `./uninstall.sh`.
+
+**Sin que se cierre.** Darle a un botón ya no cierra el popup: ves la animación y el
+estado avanzar, y podés seguir tocando (`"closeAfterAction": true` en la entrada del
+widget recupera el comportamiento viejo). Y un proyecto cuyo ▶/⏻ de fila disparó algo
+muestra *levantando…* igual que el botón grande. Mientras el buscador está abierto el
+popup es sólo el buscador: sin chips de servicios ni botones del proyecto.
 
 **Guiarlo a mano.** La resolución es una cadena corta y cada paso se puede forzar:
 la **terminal que mirás** (`mode: auto`), el ajuste **`project`** del widget (viaja

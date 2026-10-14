@@ -1369,13 +1369,17 @@ port_clashes() {
 }
 
 project_snapshot() {
-    local p=$1 inner
+    local p=$1 inner last=null
     inner=$("$0" "$p" json 2>/dev/null) || return 1
+    if [[ -r $RUNTIME_BASE/$p/result.json ]] && jq -e . "$RUNTIME_BASE/$p/result.json" >/dev/null 2>&1; then
+        last=$(cat "$RUNTIME_BASE/$p/result.json")
+    fi
     printf '%s' "$inner" | jq -c '{project: .project, name: .name, dir: .dir,
         up: ([.services[] | select(.up)] | length),
         total: (.services | length),
         allUp: (([.services[] | select(if .health != "" then .healthy else .up end)] | length) == (.services | length)),
-        services: [.services[] | {id: .id, label: .label, type: .type, port: .port, up: .up, healthy: .healthy, managed: .managed}]}'
+        services: [.services[] | {id: .id, label: .label, type: .type, port: .port, up: .up, healthy: .healthy, managed: .managed}],
+        lastResult: $last}' --argjson last "$last"
 }
 
 # devstack all [json|status|up|down]

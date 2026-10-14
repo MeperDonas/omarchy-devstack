@@ -39,6 +39,10 @@ Panel {
   // El panel ya muestra el progreso: desde acá los avisos de escritorio sólo
   // traen el resultado (si no, caen encima del propio panel). all | final | off
   readonly property string notifyMode: setting("notifyMode", "final")
+  // Al darle a un botón, ¿se cierra el popup? Por defecto NO: te quedás viendo
+  // cómo avanza (y podés seguir tocando). Poné true para el comportamiento
+  // viejo (cerrar y esperar la notificación).
+  readonly property bool closeAfterAction: setting("closeAfterAction", false)
   readonly property color colorOff: setting("colorOff", "#7A8394")
   readonly property color colorError: setting("colorError", "#E05561")
   readonly property color colorWorking: setting("colorWorking", "#E5B454")
@@ -62,6 +66,10 @@ Panel {
   property var found: []
   property bool searching: false
   property bool findRunning: false
+  // Qué proyectos tienen una acción en curso disparada desde una fila (así el
+  // botón chico muestra lo mismo que el grande).
+  property var startingProjects: []
+  property var startingAt: ({})
   // Proyecto fijado a mano: sin pin el widget sigue el foco de la terminal.
   property string pinned: ""
   // Firma de lo último aplicado: cada 5 s llega el mismo JSON y reasignar
@@ -218,9 +226,7 @@ Panel {
     root.failure = ""
   }
   function runCommand(command) {
-    // El popup se cierra: la barra queda visible y el resultado llega por
-    // notificación (sólo el resultado, ver notifyMode).
-    close()
+    if (root.closeAfterAction) close()
     refreshTimer.restart()
     refreshList()
     bar.run("DEVDATA_NOTIFY=" + root.notifyMode + " " + command)
@@ -230,7 +236,7 @@ Panel {
   // `|| read -r` final deja la ventana abierta si algo falla, para que el
   // mensaje no se pierda en un parpadeo.
   function runInTerminal(command) {
-    close()
+    if (root.closeAfterAction) close()
     refreshTimer.restart()
     bar.run("omarchy-launch-terminal bash -lc '" + "DEVDATA_NOTIFY=" + root.notifyMode + " " + command + " || read -r'")
   }
@@ -349,6 +355,20 @@ Panel {
         data = null
       }
       if (!data || !data.length) return
+      // Las acciones disparadas desde una fila también terminan: se sueltan
+      // cuando su estado llegó o cuando su último resultado es de esta corrida.
+      var still = []
+      for (var i = 0; i < root.startingProjects.length; i++) {
+        var name = root.startingProjects[i]
+        var proj = null
+        for (var j = 0; j < data.length; j++) if (data[j].project === name) { proj = data[j]; break }
+        if (!proj) continue
+        var lr = proj.lastResult
+        if (proj.up > 0 || (lr && (lr.at || 0) + 2 >= (root.startingAt[name] || 0))) continue
+        still.push(name)
+      }
+      if (still.length !== root.startingProjects.length) root.startingProjects = still
+
       var sig = JSON.stringify(data)
       if (sig === root.appliedListSignature) return
       root.appliedListSignature = sig
@@ -404,6 +424,21 @@ Panel {
 
   // Buscar proyectos a mano: recorre tus carpetas (devstack find) y ofrece lo
   // que se puede levantar, sin depender de la lectura automática.
+  function isStarting(project) {
+    return root.startingProjects.indexOf(project) >= 0
+  }
+
+  function markStarting(project) {
+    var at = root.startingAt
+    at[project] = Date.now() / 1000
+    root.startingAt = at
+    if (root.startingProjects.indexOf(project) < 0) {
+      var list = root.startingProjects.slice()
+      list.push(project)
+      root.startingProjects = list
+    }
+  }
+
   function findProjects() {
     root.searching = true
     root.found = []
@@ -701,7 +736,7 @@ Panel {
               anchors.verticalCenter: parent.verticalCenter
             }
             Text {
-              text: modelData.up + "/" + modelData.total
+              text: root.isStarting(modelData.project) ? "levantando…" : modelData.up + "/" + modelData.total
               color: modelData.allUp ? (root.foreignCount(modelData) > 0 ? root.colorWorking : root.colorOk)
                 : (modelData.up > 0 ? root.colorWorking : root.colorOff)
               font.family: bar ? bar.fontFamily : "monospace"
@@ -713,8 +748,11 @@ Panel {
             ActionButton {
               compact: true
               icon: modelData.up > 0 ? "󰍃" : "󰐊"
-              enabled: true
-              onTriggered: root.runCommand(cli + " " + modelData.project + " " + (modelData.up > 0 ? "down" : "up"))
+              enabled: !root.isStarting(modelData.project)
+              onTriggered: {
+                if (modelData.up === 0) root.markStarting(modelData.project)
+                root.runCommand(cli + " " + modelData.project + " " + (modelData.up > 0 ? "down" : "up"))
+              }
             }
             }
           }
@@ -760,7 +798,7 @@ Panel {
 
         ListView {
           width: parent.width
-          height: Math.min(contentHeight, 200)
+          height: Math.min(contentHeight, 156)
           spacing: 4
           clip: true
           model: root.found
@@ -855,7 +893,9 @@ Panel {
         anchors.horizontalCenter: parent.horizontalCenter
         width: contentColumn.width
         spacing: 6
-        visible: !root.allMode
+        // Mientras buscás, el popup es la búsqueda: sin chips ni botones del
+        // proyecto ocupando media pantalla.
+        visible: !root.allMode && !root.searching
 
         Repeater {
           model: root.services
@@ -899,7 +939,7 @@ Panel {
       Row {
         anchors.horizontalCenter: parent.horizontalCenter
         spacing: 8
-        visible: root.declared && !root.allMode
+        visible: root.declared && !root.allMode && !root.searching
         ActionButton { label: "Levantar"; icon: "󰐊"; enabled: !root.allUp && !root.starting; onTriggered: root.run("up") }
         // Bajar queda habilitado incluso mientras levanta: es la salida cuando
         // una acción se cuelga (y "Cancelar" no existe en el CLI).
@@ -908,7 +948,7 @@ Panel {
 
       Row {
         anchors.horizontalCenter: parent.horizontalCenter
-        visible: root.declared && !root.allMode
+        visible: root.declared && !root.allMode && !root.searching
         spacing: 8
         ActionButton { label: "Abrir"; icon: "󰖟"; enabled: root.openSvc !== undefined && root.openSvc.up; onTriggered: root.run("open") }
         ActionButton { label: "Logs"; icon: "󱆃"; enabled: root.openService !== ""; onTriggered: root.runInTerminal(cli + projectArg + " logs " + root.openService) }
@@ -916,7 +956,7 @@ Panel {
 
       Row {
         anchors.horizontalCenter: parent.horizontalCenter
-        visible: root.declared && !root.allMode
+        visible: root.declared && !root.allMode && !root.searching
         spacing: 8
         ActionButton { label: "Reiniciar"; icon: "󰜉"; enabled: root.anyUp && !root.starting; onTriggered: root.run("restart") }
         ActionButton { label: "Menú"; icon: "󰒓"; enabled: true; onTriggered: root.runCommand("omarchy menu summon " + (root.effectiveProject !== "" ? "dev." + root.effectiveProject : "dev")) }
