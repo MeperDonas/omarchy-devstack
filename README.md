@@ -136,6 +136,30 @@ devstack add  ~/Projects/my-app     # writes ~/.config/devstack/my-app.json
 `scan` prints the reasoning line by line; `add` refuses to overwrite an existing
 project and refuses to declare the same directory twice under another name.
 
+### Follow the session (auto mode)
+
+The widget can show the stack of **the terminal you are looking at** instead of a
+fixed project:
+
+```bash
+devstack here json --window   # what the widget calls every 5 s
+devstack here status          # the project of the terminal you are in
+devstack here up              # lift the stack of the project you are standing in
+devstack here down            # …and drop it
+```
+
+`here` reads the working directory of the focused terminal (through Omarchy's
+`omarchy-cmd-terminal-cwd`), maps it to the declared project that contains it —
+longest match wins, so a subdirectory is still its project — and forwards any
+subcommand there. An undeclared repo shows up in the widget as
+`Sin declarar · <repo>` with a **Declarar este stack** button that runs the
+detector in a terminal, so you see what it inferred before anything is written.
+If nothing resolves (you are looking at the browser, not a terminal) it falls back
+to the `project` setting; `mode: fixed` pins one project like before.
+
+Path resolution only looks at *your* projects (`~/.config/devstack`): the examples
+that ship with the plugin are for trying things out, not for deciding where you are.
+
 ## Configure a stack
 
 `~/.config/devstack/<name>.json`:
@@ -279,6 +303,14 @@ se actualiza con `omarchy plugin update` y se configura desde los ajustes de
 Omarchy. Para probarlo sin docker ni node: `DEVDATA_CONFIG="$PWD/config"
 DEVDATA_PROJECT=demo bin/devstack demo up` (levanta un `python3 -m http.server`).
 Desinstalar: `./uninstall.sh`.
+
+**Seguir tu sesión (modo auto).** Por defecto el widget muestra el stack de la
+**terminal que estás mirando**: `devstack here json --window` resuelve la carpeta
+de la terminal activa (con `omarchy-cmd-terminal-cwd`), la mapea al proyecto
+declarado que la contiene y reenvía ahí cualquier subcomando (`devstack here up`
+levanta lo que estás mirando). Si el repo no está declarado, el widget lo dice con
+un botón para declararlo con el detector; si no hay nada que resolver, cae al
+proyecto del ajuste `project`. Con `mode: fixed` queda clavado como antes.
 
 **Detectar en vez de escribir.** `devstack scan <dir>` propone el stack de
 cualquier repo (compose, `package.json`, `.env`, código, y los comandos que

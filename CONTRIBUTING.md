@@ -10,6 +10,7 @@ sudo by itself.
 | Path | What it is |
 |---|---|
 | `bin/devstack` | the CLI (orchestration layer): service order, waits, health checks, pidfiles, docker elevation, notifications, `--force` take-over, `menu` block generation |
+| `devstack here` (in `bin/devstack`) | the context layer: resolves which project a path (or the focused terminal, with `--window`) belongs to, and forwards subcommands there. Pure bash on top of `hyprctl` + `omarchy-cmd-terminal-cwd` — the widget stays dumb and calls it every 5 s |
 | `lib/scan.sh` | the detection layer: reads a repo and **proposes** a stack. Read-only by contract — it never runs the project, never elevates, and never copies `.env` values (only ports and local URLs) |
 | `test/fixtures/` + `test/scan_test.sh` | toy repos reproducing the shapes we support (two-package, single app at the root, nothing recognisable, agent-documented commands) and the assertions on what the detector must infer |
 | `Panel.qml` | the bar widget (an Omarchy `bar-widget` plugin). Reads `devstack json`, renders the four-colour state, one chip per service and the action buttons |

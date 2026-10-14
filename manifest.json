@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "meperdonas.devstack",
   "name": "devstack",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "author": "Santiago Villabona (MeperDonas)",
   "license": "MIT",
   "description": "One bar icon per local dev stack: lift, watch and drop docker services and dev servers, in order, with a four-colour state, a take-over button for ports held by stray processes, and a detector that proposes the stack of any repository.",
@@ -35,15 +35,27 @@
       "colorError": "#E05561",
       "colorWorking": "#E5B454",
       "colorOk": "#7FBF7F",
-      "notifyMode": "final"
+      "notifyMode": "final",
+      "mode": "auto"
     },
     "schema": [
+      {
+        "key": "mode",
+        "type": "enum",
+        "label": "Which project",
+        "options": [
+          "auto",
+          "fixed"
+        ],
+        "defaultValue": "auto",
+        "description": "auto: follow the terminal you are looking at (and offer to declare the repo if it is not declared yet). fixed: always the project below."
+      },
       {
         "key": "project",
         "type": "string",
         "label": "Project",
         "defaultValue": "",
-        "description": "devstack project name (a JSON file in ~/.config/devstack). Empty uses the default project."
+        "description": "Project used in fixed mode, or as fallback when auto finds nothing."
       },
       {
         "key": "command",

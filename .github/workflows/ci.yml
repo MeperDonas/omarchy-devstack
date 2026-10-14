@@ -41,6 +41,9 @@ jobs:
       - name: Detector fixtures
         run: ./test/scan_test.sh
 
+      - name: Session resolution
+        run: ./test/here_test.sh
+
   smoke:
     runs-on: ubuntu-24.04
     steps:

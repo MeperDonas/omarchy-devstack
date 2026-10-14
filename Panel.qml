@@ -18,6 +18,10 @@ Panel {
   ipcTarget: "meperdonas.devstack"
 
   // ------------------------------------------------------------ ajustes
+  // auto: el proyecto lo resuelve el CLI desde la ventana de terminal activa
+  // (`devstack here json --window`), así el icono sigue lo que estás mirando.
+  // fixed: el proyecto del ajuste `project`, como antes.
+  readonly property string mode: setting("mode", "auto")
   readonly property string projectName: setting("project", "")
   // El CLI viaja DENTRO del plugin: `omarchy plugin add` clona el repo entero,
   // así que un solo `omarchy plugin add --enable` deja el widget funcionando.
@@ -46,6 +50,10 @@ Panel {
   // el default): así las acciones siguientes y el botón Menú apuntan bien aunque
   // la entrada de la barra no traiga `project`.
   property string resolvedProject: ""
+  property bool declared: true
+  property bool fallbackUsed: false
+  property string repo: ""
+  property string suggested: ""
   property var services: []
   property string openService: ""
   property string pending: ""
@@ -56,6 +64,10 @@ Panel {
   readonly property string projectArg: effectiveProject !== "" ? " " + effectiveProject : ""
 
   readonly property bool starting: pending !== ""
+  // repo detectado pero sin declarar (se puede declarar con el detector)
+  readonly property bool undeclared: loaded && !declared && repo !== ""
+  // nada que mostrar (terminal fuera de cualquier repo)
+  readonly property bool noProject: loaded && !declared && repo === ""
   readonly property bool anyUp: services.some(function (s) { return s.up })
   readonly property bool allUp: services.length > 0 && services.every(function (s) {
     return s.health !== "" ? s.healthy : (s.port > 0 ? s.up : true)
@@ -72,7 +84,9 @@ Panel {
     return faltan.join(" + ")
   }
 
-  readonly property string stateKind: !loaded ? "error"
+  readonly property string stateKind: noProject ? "off"
+    : undeclared ? "working"
+    : !loaded ? "error"
     : starting ? "working"
     : stuck ? "error"
     : allUp ? "ok"
@@ -83,7 +97,9 @@ Panel {
     : stateKind === "working" ? colorWorking
     : colorOff
 
-  readonly property string stateText: !loaded ? "Sin datos"
+  readonly property string stateText: noProject ? "Sin proyecto"
+    : undeclared ? "Sin declarar · " + name
+    : !loaded ? "Sin datos"
     : pending === "up" ? (pendingSeconds >= pendingTimeout ? "No terminó de levantar" : "Levantando… " + pendingSeconds + "s")
     : pending === "down" ? "Bajando… " + pendingSeconds + "s"
     : stuck ? "Servicio sin responder"
@@ -150,7 +166,9 @@ Panel {
 
   Process {
     id: probe
-    command: ["/bin/bash", "-lc", cli + projectArg + " json"]
+    command: ["/bin/bash", "-lc", root.mode === "fixed"
+      ? cli + root.projectArg + " json"
+      : cli + " here json --window"]
     stdout: StdioCollector { id: probeOutput }
     onExited: {
       var data = null
@@ -164,6 +182,23 @@ Panel {
         return
       }
       root.loaded = true
+      root.declared = data.declared !== false
+      if (!root.declared && root.mode === "auto") {
+        // Sin proyecto declarado para la terminal activa: o hay un repo que
+        // declarar, o no hay nada (p. ej. estás mirando el navegador).
+        root.repo = data.repo || ""
+        root.suggested = data.suggested || ""
+        root.services = []
+        root.name = data.name || ""
+        root.resolvedProject = ""
+        root.pending = ""
+        // Respaldo: si hay un proyecto por defecto en los ajustes, se muestra
+        // ése (así el icono no queda vacío por mirar otra ventana).
+        if (data.repo === "" && root.projectName !== "" && !fallbackProbe.running) fallbackProbe.running = true
+        return
+      }
+      root.fallbackUsed = false
+      root.repo = data.repo || ""
       root.name = data.name || "devstack"
       root.resolvedProject = data.project || ""
       root.services = data.services || []
@@ -178,6 +213,31 @@ Panel {
         if (gone && !root.services.some(function (s) { return s.type === "docker" && s.up })) root.pending = ""
       }
       if (root.pending !== "" && root.pendingSeconds >= root.pendingTimeout) root.pending = ""
+    }
+  }
+
+  // Respaldo del modo auto: el proyecto del ajuste `project`, cuando la ventana
+  // activa no está dentro de ningún repo detectable.
+  Process {
+    id: fallbackProbe
+    command: ["/bin/bash", "-lc", root.cli + " " + root.projectName + " json"]
+    stdout: StdioCollector { id: fallbackOutput }
+    onExited: {
+      var data = null
+      try {
+        data = JSON.parse(String(fallbackOutput.text || ""))
+      } catch (error) {
+        data = null
+      }
+      if (!data) return
+      root.declared = true
+      root.fallbackUsed = true
+      root.name = data.name || root.projectName
+      root.resolvedProject = data.project || root.projectName
+      root.repo = data.repo || ""
+      root.services = data.services || []
+      root.openService = data.open || ""
+      root.loaded = true
     }
   }
 
@@ -228,7 +288,7 @@ Panel {
       anchors.fill: parent
       hoverEnabled: true
       onClicked: root.toggle()
-      onEntered: if (bar) bar.showTooltip(mouse, root.name + " · " + root.stateText)
+      onEntered: if (bar) bar.showTooltip(mouse, (root.name !== "" ? root.name + " · " : "") + root.stateText + (root.fallbackUsed ? " · por defecto" : ""))
       onExited: if (bar) bar.hideTooltip(mouse)
     }
   }
@@ -392,6 +452,7 @@ Panel {
 
       Row {
         anchors.horizontalCenter: parent.horizontalCenter
+        visible: root.declared
         spacing: 8
         ActionButton { label: "Abrir"; icon: "󰖟"; enabled: root.openSvc !== undefined && root.openSvc.up && !root.starting; onTriggered: root.run("open") }
         ActionButton { label: "Logs"; icon: "󱆃"; enabled: root.openService !== ""; onTriggered: root.runInTerminal(cli + projectArg + " logs " + root.openService) }
@@ -399,6 +460,7 @@ Panel {
 
       Row {
         anchors.horizontalCenter: parent.horizontalCenter
+        visible: root.declared
         spacing: 8
         ActionButton { label: "Reiniciar"; icon: "󰜉"; enabled: root.anyUp && !root.starting; onTriggered: root.run("restart") }
         ActionButton { label: "Menú"; icon: "󰒓"; enabled: true; onTriggered: root.runCommand("omarchy menu summon " + (root.effectiveProject !== "" ? "dev." + root.effectiveProject : "dev")) }
@@ -406,7 +468,7 @@ Panel {
 
       ActionButton {
         anchors.horizontalCenter: parent.horizontalCenter
-        visible: root.needsTakeover
+        visible: root.declared && root.needsTakeover
         wide: true
         label: root.starting ? "Tomando el control…" : root.takeoverLabel
         icon: "󰒓"

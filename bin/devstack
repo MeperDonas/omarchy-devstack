@@ -768,6 +768,129 @@ list_all() {
     done < <(jq -r '.tasks[]? | "\(.id)\t\(.label // "")\t\(.cmd)"' "$CONFIG_FILE")
 }
 
+# Nombre de proyecto a partir de un directorio (sin guiones sobrantes).
+sanitize_name() {
+    printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9._-' '-' | sed -e 's/^-\{1,\}//' -e 's/-\{1,\}$//'
+}
+
+# --- contexto: "¿en qué proyecto estoy parado?" ------------------------------
+# Proyecto declarado que contiene esa ruta (gana el directorio más largo).
+project_for_path() {
+    local path=$1 dir f name best="" best_len=0 cdir
+    path=$(cd "$path" 2>/dev/null && pwd) || return 1
+    # Ojo: `"${arr[@]}"/*.json` sólo glob-ea el ÚLTIMO elemento del array; hay
+    # que anidar los bucles por directorio.
+    # Los ejemplos que viajan con el plugin (demo, example) NO cuentan como
+    # "proyecto donde estás parado": sirven para probar, no para resolver rutas.
+    local dirs=("$USER_CONFIG_DIR")
+    [[ -n ${DEVDATA_CONFIG:-} ]] && dirs=("$DEVDATA_CONFIG" "$USER_CONFIG_DIR")
+    for cdir in "${dirs[@]}"; do
+        for f in "$cdir"/*.json; do
+            [[ -r $f ]] || continue
+            dir=$(jq -r '.dir // empty' "$f" 2>/dev/null)
+            [[ -n $dir ]] || continue
+            dir="${dir/#\~/$HOME}"
+            dir=$(cd "$dir" 2>/dev/null && pwd) || continue
+            case $path in
+                "$dir" | "$dir"/*)
+                    if (( ${#dir} > best_len )); then
+                        best_len=${#dir}
+                        best=$(basename "$f" .json)
+                    fi
+                    ;;
+            esac
+        done
+    done
+    [[ -n $best ]] && printf '%s' "$best" || return 1
+}
+
+# Ruta de referencia: la terminal activa (--window) o el directorio actual.
+reference_path() {
+    if [[ ${1:-} == --window ]] && command -v omarchy-cmd-terminal-cwd >/dev/null 2>&1; then
+        local cwd
+        cwd=$(omarchy-cmd-terminal-cwd 2>/dev/null)
+        [[ -d $cwd ]] && {
+            printf '%s' "$cwd"
+            return 0
+        }
+    fi
+    printf '%s' "$PWD"
+}
+
+# Raíz del repo (o la ruta misma si no es un repo de git).
+repo_root_of() {
+    local path=$1 root
+    root=$(git -C "$path" rev-parse --show-toplevel 2>/dev/null)
+    [[ -n $root ]] && {
+        printf '%s' "$root"
+        return 0
+    }
+    printf '%s' "$path"
+}
+
+# ¿hay algo que valga la pena declarar acá? (si no, no ofrecemos nada)
+looks_like_repo() {
+    local root=$1
+    [[ -d $root/.git ]] && return 0
+    local m
+    for m in package.json pyproject.toml requirements.txt go.mod Cargo.toml Gemfile composer.json \
+        manage.py docker-compose.yml compose.yml docker-compose.yaml compose.yaml; do
+        [[ -e $root/$m ]] && return 0
+    done
+    return 1
+}
+
+# devstack here [json|status|<subcomando>] [--window]
+# El proyecto de la terminal activa (--window, para el widget) o el del $PWD
+# (para un atajo de teclado: "levantá el stack de donde estoy parado").
+here() {
+    local sub=json use_window=""
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            --window) use_window=--window ;;
+            -*) die "here: opción desconocida $1" ;;
+            *) sub=$1 ;;
+        esac
+        shift
+    done
+    local cwd repo project suggested inner
+    cwd=$(reference_path "$use_window")
+    repo=$(repo_root_of "$cwd")
+    if project=$(project_for_path "$cwd"); then
+        if [[ $sub == json ]]; then
+            inner=$("$0" "$project" json)
+            printf '%s' "$inner" | jq -c --arg p "$project" --arg cwd "$cwd" --arg repo "$repo" \
+                '. + {mode:"auto",declared:true,project:$p,cwd:$cwd,repo:$repo}'
+        else
+            exec "$0" "$project" "$sub"
+        fi
+        return 0
+    fi
+    [[ -n $(printf '%s' "$repo") ]] || repo=""
+    if [[ -z $repo || ! -d $repo ]] || ! looks_like_repo "$repo"; then
+        # No hay nada que declarar (p. ej. estás en $HOME): estado neutro.
+        if [[ $sub == json ]]; then
+            printf '{"mode":"auto","declared":false,"project":"","name":"","repo":"","cwd":"%s","suggested":"","services":[],"open":"","urls":{}}\n' "$cwd"
+            return 0
+        fi
+        [[ $sub == status ]] && printf 'Sin proyecto para %s\n' "$cwd" && return 0
+        die "No hay ningún proyecto declarado para $cwd"
+    fi
+    suggested=$(sanitize_name "$(basename "$repo")")
+    case $sub in
+        json)
+            printf '{"mode":"auto","declared":false,"project":"","name":"%s","repo":"%s","cwd":"%s","suggested":"%s","services":[],"open":"","urls":{}}\n' \
+                "$(basename "$repo")" "$repo" "$cwd" "$suggested"
+            ;;
+        status)
+            printf 'Sin declarar: %s\n  repo: %s\n  → devstack add %s\n' "$(basename "$repo")" "$repo" "$repo"
+            ;;
+        *)
+            die "Ese repo todavía no está declarado ($repo). Corré: devstack add $repo"
+            ;;
+    esac
+}
+
 # --- detección (scan/add) ---------------------------------------------------
 require_scan() {
     [[ -n $SCAN_LIB ]] || die "scan/add necesitan lib/scan.sh: usá el CLI que viene dentro del plugin (o instalá con ./install.sh)"
@@ -837,7 +960,7 @@ add_cmd() {
     root=$(cd "$dir" && pwd)
     if [[ -z $name ]]; then
         # sin el \n final: tr -c lo convertía en un guión al final del nombre
-        name=$(printf '%s' "$(basename "$root")" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9._-' '-' | sed -e 's/^-\{1,\}//' -e 's/-\{1,\}$//')
+        name=$(sanitize_name "$(basename "$root")")
     fi
     [[ $name =~ ^[a-zA-Z0-9._-]+$ ]] || die "Nombre inválido: $name"
     json=$(scan_project_json "$root" "" | grep -v '^#') || die "No pude analizar $root"
@@ -947,6 +1070,10 @@ case "$1" in
         ;;
     scan)
         scan_cmd "${@:2}"
+        exit 0
+        ;;
+    here)
+        here "${@:2}"
         exit 0
         ;;
     add)
