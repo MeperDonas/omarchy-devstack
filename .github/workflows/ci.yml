@@ -44,6 +44,9 @@ jobs:
       - name: Widget shell safety
         run: ./test/panel_shell_safety_test.sh
 
+      - name: Translations (en/es)
+        run: ./test/i18n_test.sh
+
       - name: All projects (`devstack all`)
         run: ./test/all_test.sh
 

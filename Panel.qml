@@ -2,6 +2,7 @@ import QtQuick
 import Quickshell
 import Quickshell.Io
 import qs.Ui
+import "i18n.js" as I18n
 
 // devstack — barra de Omarchy para stacks de desarrollo locales.
 //
@@ -90,6 +91,9 @@ Panel {
   property real pendingAt: 0
   property string failure: ""
   property int stuckPolls: 0
+  // Idioma del widget (en | es). Vive en ~/.config/devstack/lang y se cambia
+  // con el botoncito del popup o con `devstack lang en|es`.
+  property string lang: "en"
 
   // El proyecto de las ACCIONES: el que el CLI resolvió (foco, ajuste o casa) o,
   // si todavía no resolvió nada, el del ajuste. Con `project` fijo acá, los
@@ -175,23 +179,23 @@ Panel {
     : stateKind === "working" ? colorWorking
     : colorOff
 
-  readonly property string stateText: (allMode ? (!loaded ? "Sin datos"
-      : everythingUp ? "Todo arriba · " + projectsTotal
+  readonly property string stateText: (allMode ? (!loaded ? t("noData")
+      : everythingUp ? t("allUp") + projectsTotal
       : projectsUp > 0 ? projectsUp + "/" + projectsTotal + " arriba"
-      : "Todo detenido")
-    : noProject ? (root.showRows ? "Sin proyecto · elegí uno abajo" : "Sin proyecto")
-    : undeclared ? "Sin declarar · " + name
-    : !loaded ? "Sin datos"
-    : failure !== "" ? "Falló: " + failure
-    : pending === "up" ? (pendingSeconds >= pendingTimeout ? "No terminó de levantar"
-        : "Levantando… " + pendingSeconds + "s" + (stuck ? " · un servicio no responde" : ""))
-    : pending === "down" ? "Bajando… " + pendingSeconds + "s"
-    : stuck && pending === "" ? "Servicio sin responder"
-    : allUp ? (services.every(function (s) { return s.health === "" || s.healthy }) ? "Arriba" : "Arriba · compilando")
-    : anyUp ? "Parcial · falta " + missingText
+      : t("allStopped"))
+    : noProject ? (root.showRows ? t("noProjectPick") : t("noProject"))
+    : undeclared ? t("undeclared") + name
+    : !loaded ? t("noData")
+    : failure !== "" ? t("failed") + failure
+    : pending === "up" ? (pendingSeconds >= pendingTimeout ? t("didNotFinish")
+        : t("lifting") + pendingSeconds + "s" + (stuck ? t("serviceNoAnswer") : ""))
+    : pending === "down" ? t("stopping") + pendingSeconds + "s"
+    : stuck && pending === "" ? t("serviceNotResponding")
+    : allUp ? (services.every(function (s) { return s.health === "" || s.healthy }) ? t("up") : t("upCompiling"))
+    : anyUp ? t("partial") + missingText
     // El chip dice de dónde salió el proyecto: del foco, de tu ajuste/casa
     // ("por defecto") o porque lo fijaste. Así "Quitar el fijado" se entiende.
-    : "Detenido") + (allMode || !declared ? "" : pinned !== "" ? " · fijado" : fallbackUsed ? " · por defecto" : " · foco")
+    : t("stopped")) + (allMode || !declared ? "" : pinned !== "" ? t("originPinned") : fallbackUsed ? t("originDefault") : t("originFocus"))
 
   function svcColor(s) {
     if (s.health !== "") return s.healthy ? colorOk : (s.up ? (stuck ? colorError : colorWorking) : colorOff)
@@ -214,13 +218,30 @@ Panel {
     var ids = takeoverCommands.split(" ")
     if (ids.length === 1 && ids[0] !== "") {
       var one = services.filter(function (s) { return s.id === ids[0] })[0]
-      return "Tomar el control de " + (one ? one.label : ids[0])
+      return root.t("takeoverOne", { label: one ? one.label : ids[0] })
     }
-    return "Tomar el control (" + (ids.length || 1) + " puertos)"
+    return root.t("takeoverMany", { n: ids.length || 1 })
   }
 
   implicitWidth: allMode ? 50 : 30
   implicitHeight: bar ? bar.barSize : 26
+
+  Process {
+    id: langProbe
+    command: ["/bin/bash", "-lc", root.cli + " lang"]
+    stdout: StdioCollector { id: langOutput }
+    onExited: {
+      var value = String(langOutput.text || "").trim()
+      root.lang = value === "es" ? "es" : "en"
+    }
+  }
+
+  function toggleLang() {
+    var next = root.lang === "en" ? "es" : "en"
+    bar.run("DEVDATA_NOTIFY=off " + cli + " lang " + next)
+    root.lang = next
+    refresh()
+  }
 
   function refresh() { if (!probe.running) probe.running = true }
   function startPending(what) {
@@ -233,6 +254,11 @@ Panel {
   // afuera (rutas detectadas, nombres de proyecto, ids de servicio) pasa por acá
   // antes de entrar en un comando: un nombre de carpeta con $(…) o ; no puede
   // ejecutar nada.
+  // Traducción: t("clave") o t("clave", { n: 7 })
+  function t(key, subs) {
+    return I18n.t(root.lang, key, subs)
+  }
+
   function shq(value) {
     return "'" + String(value).replace(/'/g, "'\\''") + "'"
   }
@@ -302,7 +328,7 @@ Panel {
       // acción no está progresando; se suelta el "levantando" (la acción sigue,
       // sólo se libera la UI).
       else if (root.pending !== "" && root.stuck && root.pendingSeconds >= root.stuckAfterPolls * 25) {
-        root.failure = "no terminó de levantar (mirá los logs)"
+        root.failure = root.t("stuckHint")
         root.pending = ""
       }
       // El CLI deja su resultado al terminar (result.json): si la acción ya
@@ -515,7 +541,10 @@ Panel {
     }
   }
 
-  Component.onCompleted: refresh()
+  Component.onCompleted: {
+    langProbe.running = true
+    refresh()
+  }
 
   Rectangle {
     id: iconButton
@@ -586,22 +615,38 @@ Panel {
       anchors.margins: 16
       spacing: 14
 
+        // Encabezado: ícono y proyecto centrados, y a la derecha el botoncito de
+        // idioma (alterna EN/ES, no es un dropdown).
+        Item {
+          width: contentColumn.width
+          height: headerRow.implicitHeight > 0 ? headerRow.implicitHeight : 26
+
       Row {
-        anchors.horizontalCenter: parent.horizontalCenter
-        spacing: 10
-        Text {
-          text: "󰒋"
-          color: root.stateColor
-          font.family: bar ? bar.fontFamily : "monospace"
-          font.pixelSize: 19
+        id: headerRow
+          anchors.horizontalCenter: parent.horizontalCenter
+          spacing: 10
+          Text {
+            text: "󰒋"
+            color: root.stateColor
+            font.family: bar ? bar.fontFamily : "monospace"
+            font.pixelSize: 19
+          }
+          Text {
+            text: root.name
+            color: bar ? bar.foreground : "white"
+            font.family: bar ? bar.fontFamily : "monospace"
+            font.pixelSize: 15
+            font.bold: true
+            anchors.verticalCenter: parent.verticalCenter
+          }
         }
-        Text {
-          text: root.name
-          color: bar ? bar.foreground : "white"
-          font.family: bar ? bar.fontFamily : "monospace"
-          font.pixelSize: 15
-          font.bold: true
+
+        ActionButton {
+          compact: true
+          anchors.right: parent.right
           anchors.verticalCenter: parent.verticalCenter
+          icon: root.lang.toUpperCase()
+          onTriggered: root.toggleLang()
         }
       }
 
@@ -753,7 +798,7 @@ Panel {
               anchors.verticalCenter: parent.verticalCenter
             }
             Text {
-              text: root.isStarting(modelData.project) ? "levantando…" : modelData.up + "/" + modelData.total
+              text: root.isStarting(modelData.project) ? root.t("liftingRow") : modelData.up + "/" + modelData.total
               color: modelData.allUp ? (root.foreignCount(modelData) > 0 ? root.colorWorking : root.colorOk)
                 : (modelData.up > 0 ? root.colorWorking : root.colorOff)
               font.family: bar ? bar.fontFamily : "monospace"
@@ -783,21 +828,21 @@ Panel {
         visible: !root.searching
         spacing: 8
         ActionButton {
-          label: "Quitar el fijado"
+          label: root.t("unpin")
           icon: "󰁔"
           visible: !root.allMode && root.pinned !== ""
           onTriggered: root.unpinProject()
         }
         // En modo all el popup ya lista todos los proyectos; buscar sigue teniendo
         // sentido para los repos que todavía no declaraste.
-        ActionButton { label: "Buscar proyectos"; icon: "󰍉"; visible: true; onTriggered: root.findProjects() }
+        ActionButton { label: root.t("find"); icon: "󰍉"; visible: true; onTriggered: root.findProjects() }
       }
 
       Row {
         anchors.horizontalCenter: parent.horizontalCenter
         visible: root.searching
         spacing: 8
-        ActionButton { wide: true; label: root.findRunning ? "Buscando…" : "Buscar de nuevo"; icon: "󰍉"; enabled: !root.findRunning; onTriggered: root.findProjects() }
+        ActionButton { wide: true; label: root.t(root.findRunning ? "searching" : "findAgain"); icon: "󰍉"; enabled: !root.findRunning; onTriggered: root.findProjects() }
       }
 
       Column {
@@ -808,7 +853,7 @@ Panel {
         Text {
           width: parent.width
           horizontalAlignment: Text.AlignHCenter
-          text: root.found.length > 0 ? root.found.length + " proyectos con stack" : (root.findRunning ? "" : "No encontré nada en tus carpetas")
+          text: root.found.length > 0 ? root.found.length + root.t("projectsWithStack") : (root.findRunning ? "" : root.t("nothingFound"))
           color: bar ? bar.foreground : "white"
           font.family: bar ? bar.fontFamily : "monospace"
           font.pixelSize: 10
@@ -868,7 +913,7 @@ Panel {
               }
 
               Text {
-                text: modelData.declared ? modelData.up + "/" + modelData.total : modelData.services.length + " serv."
+                text: modelData.declared ? modelData.up + "/" + modelData.total : modelData.services.length + " " + root.t("services")
                 color: root.colorOff
                 font.family: bar ? bar.fontFamily : "monospace"
                 font.pixelSize: 10
@@ -889,21 +934,21 @@ Panel {
         anchors.horizontalCenter: parent.horizontalCenter
         visible: root.searching
         spacing: 8
-        ActionButton { wide: true; label: "Volver"; icon: "󰁍"; onTriggered: root.searching = false }
+        ActionButton { wide: true; label: root.t("back"); icon: "󰁍"; onTriggered: root.searching = false }
       }
 
       Row {
         anchors.horizontalCenter: parent.horizontalCenter
         visible: root.allMode
         spacing: 8
-        ActionButton { wide: true; label: "Levantar lo que falta"; icon: "󰐊"; enabled: !root.starting && !root.everythingUp; onTriggered: root.runInTerminal(cli + " all up") }
+        ActionButton { wide: true; label: root.t("liftMissing"); icon: "󰐊"; enabled: !root.starting && !root.everythingUp; onTriggered: root.runInTerminal(cli + " all up") }
       }
 
       Row {
         anchors.horizontalCenter: parent.horizontalCenter
         visible: root.allMode
         spacing: 8
-        ActionButton { wide: true; label: "Bajar todo"; icon: "󰍃"; enabled: !root.starting && root.projectsUp > 0; onTriggered: root.runInTerminal(cli + " all down") }
+        ActionButton { wide: true; label: root.t("dropAll"); icon: "󰍃"; enabled: !root.starting && root.projectsUp > 0; onTriggered: root.runInTerminal(cli + " all down") }
       }
 
       // Un chip por servicio declarado en el JSON del proyecto.
@@ -920,7 +965,7 @@ Panel {
 
           Chip {
             label: modelData.label + (modelData.port > 0 ? " :" + modelData.port : "")
-              + ((modelData.type !== "docker" && modelData.up && !modelData.managed) ? " ·ajeno" : "")
+              + ((modelData.type !== "docker" && modelData.up && !modelData.managed) ? root.t("foreign") : "")
             lit: modelData.health !== "" ? modelData.healthy : modelData.up
             accent: root.svcColor(modelData)
           }
@@ -931,7 +976,7 @@ Panel {
         visible: root.hasClash
         width: contentColumn.width
         horizontalAlignment: Text.AlignHCenter
-        text: "󰀦 :" + root.clashPorts.join(" · :") + " compartido con otro proyecto: el que escucha puede ser el del otro"
+        text: "󰀦 :" + root.clashPorts.join(" · :") + root.t("clashWarning")
         color: root.colorWorking
         wrapMode: Text.WordWrap
         font.family: bar ? bar.fontFamily : "monospace"
@@ -947,7 +992,7 @@ Panel {
         spacing: 8
         ActionButton {
           wide: true
-          label: "Mover el puerto :" + (root.clashPorts[0] || "")
+          label: root.t("movePort") + (root.clashPorts[0] || "")
           icon: "󰒓"
           enabled: !root.starting
           onTriggered: root.runInTerminal(cli + projectArg + " port --auto && " + cli + projectArg + " restart")
@@ -958,26 +1003,26 @@ Panel {
         anchors.horizontalCenter: parent.horizontalCenter
         spacing: 8
         visible: root.declared && !root.allMode && !root.searching
-        ActionButton { label: "Levantar"; icon: "󰐊"; enabled: !root.allUp && !root.starting; onTriggered: root.run("up") }
+        ActionButton { label: root.t("lift"); icon: "󰐊"; enabled: !root.allUp && !root.starting; onTriggered: root.run("up") }
         // Bajar queda habilitado incluso mientras levanta: es la salida cuando
         // una acción se cuelga (y "Cancelar" no existe en el CLI).
-        ActionButton { label: "Bajar"; icon: "󰍃"; enabled: root.anyUp; onTriggered: root.run("down") }
+        ActionButton { label: root.t("drop"); icon: "󰍃"; enabled: root.anyUp; onTriggered: root.run("down") }
       }
 
       Row {
         anchors.horizontalCenter: parent.horizontalCenter
         visible: root.declared && !root.allMode && !root.searching
         spacing: 8
-        ActionButton { label: "Abrir"; icon: "󰖟"; enabled: root.openSvc !== undefined && root.openSvc.up; onTriggered: root.run("open") }
-        ActionButton { label: "Logs"; icon: "󱆃"; enabled: root.openService !== ""; onTriggered: root.runInTerminal(cli + projectArg + " logs " + shq(root.openService)) }
+        ActionButton { label: root.t("open"); icon: "󰖟"; enabled: root.openSvc !== undefined && root.openSvc.up; onTriggered: root.run("open") }
+        ActionButton { label: root.t("logs"); icon: "󱆃"; enabled: root.openService !== ""; onTriggered: root.runInTerminal(cli + projectArg + " logs " + shq(root.openService)) }
       }
 
       Row {
         anchors.horizontalCenter: parent.horizontalCenter
         visible: root.declared && !root.allMode && !root.searching
         spacing: 8
-        ActionButton { label: "Reiniciar"; icon: "󰜉"; enabled: root.anyUp && !root.starting; onTriggered: root.run("restart") }
-        ActionButton { label: "Menú"; icon: "󰒓"; enabled: true; onTriggered: root.runCommand("omarchy menu summon " + shq(root.effectiveProject !== "" ? "dev." + root.effectiveProject : "dev")) }
+        ActionButton { label: root.t("restart"); icon: "󰜉"; enabled: root.anyUp && !root.starting; onTriggered: root.run("restart") }
+        ActionButton { label: root.t("menu"); icon: "󰒓"; enabled: true; onTriggered: root.runCommand("omarchy menu summon " + shq(root.effectiveProject !== "" ? "dev." + root.effectiveProject : "dev")) }
       }
 
       // Repo reconocido pero sin declarar: se declara con el detector, en una
@@ -986,7 +1031,7 @@ Panel {
         anchors.horizontalCenter: parent.horizontalCenter
         visible: root.undeclared && !root.allMode
         wide: true
-        label: "Declarar este stack"
+        label: root.t("declareThis")
         icon: "󰐊"
         enabled: !root.starting
         onTriggered: root.runInTerminal(cli + " add " + shq(root.repo) + (root.suggested !== "" ? " --name " + shq(root.suggested) : ""))
@@ -996,7 +1041,7 @@ Panel {
         anchors.horizontalCenter: parent.horizontalCenter
         visible: root.declared && !root.allMode && root.needsTakeover
         wide: true
-        label: root.starting ? "Tomando el control…" : root.takeoverLabel
+        label: root.starting ? root.t("tookOver") : root.takeoverLabel
         icon: "󰒓"
         enabled: !root.starting
         onTriggered: root.run("restart " + root.takeoverCommands + " --force")

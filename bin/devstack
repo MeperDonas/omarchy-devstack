@@ -41,6 +41,7 @@
 #                                     $PWD, y reenvía ahí cmd: status, up, down, logs…
 #   devstack find [DIR...] [--json]   busca en tus carpetas los repos con stack
 #                                     detectable (no escribe nada)
+#   devstack lang [en|es]             idioma del widget (sin argumento, lo muestra)
 #   devstack use [<p>|--clear]        proyecto de casa: el que se usa cuando no hay
 #                                     otro (el widget lo usa si la terminal no está
 #                                     en ningún proyecto declarado)
@@ -397,6 +398,22 @@ find_cmd() {
          (if .docker > 0 then "docker" else "" end), .dir] | @tsv' \
         | column -t -s$'\t'
     printf '\nPara declarar uno: devstack add <ruta>  ·  para levantarlo ya: devstack add <ruta> && devstack <nombre> up\n'
+}
+
+# devstack lang [en|es] — idioma del widget. Vive en un archivo de una línea
+# (~/.config/devstack/lang) que el panel lee al arrancar; el widget tiene un
+# botoncito que lo cambia, y esto es la misma cosa desde la terminal.
+lang_cmd() {
+    local f="$USER_CONFIG_DIR/lang" want="${1:-}"
+    case $want in
+        "") cat "$f" 2>/dev/null || printf 'en\n' ;;
+        en | es)
+            mkdir -p "$USER_CONFIG_DIR"
+            printf '%s\n' "$want" >"$f"
+            ok "Idioma del widget: $want"
+            ;;
+        *) die "lang: usá 'en' o 'es'" ;;
+    esac
 }
 
 resolve_project() {
@@ -936,8 +953,8 @@ json_status() {
     if [[ -r $RUNTIME_DIR/result.json ]] && jq -e . "$RUNTIME_DIR/result.json" >/dev/null 2>&1; then
         last=$(cat "$RUNTIME_DIR/result.json")
     fi
-    printf '{"project":"%s","name":"%s","dir":"%s","services":[%s],"open":"%s","lastResult":%s}\n' \
-        "$CURRENT" "$DEVDATA_NAME" "$DIR" "$out" "$(open_service)" "$last"
+    printf '{"project":"%s","name":"%s","dir":"%s","services":[%s],"open":"%s","lang":"%s","lastResult":%s}\n' \
+        "$CURRENT" "$DEVDATA_NAME" "$DIR" "$out" "$(open_service)" "$(lang_cmd)" "$last"
 }
 
 status() {
@@ -1615,7 +1632,7 @@ usage() {
 
 # ---------------------------------------------------------------- dispatch
 
-KNOWN_COMMANDS=" up down restart status json logs open task list menu init use find port --running --up --foreign "
+KNOWN_COMMANDS=" up down restart status json logs open task list menu init use find port lang --running --up --foreign "
 
 [[ $# -gt 0 ]] || {
     list_projects
@@ -1648,6 +1665,10 @@ case "$1" in
         ;;
     use)
         use_cmd "${2:-}"
+        exit 0
+        ;;
+    lang)
+        lang_cmd "${2:-}"
         exit 0
         ;;
     find)
