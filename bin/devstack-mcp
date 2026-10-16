@@ -18,6 +18,31 @@
 
 set -uo pipefail
 
+# Directorio de estado del MCP: el del usuario (0700) o uno propio, creado por
+# nosotros con permisos 0700 y verificado (nunca un symlink ni algo ajeno).
+mcp_state_dir() {
+    if [[ -n ${XDG_RUNTIME_DIR:-} && -d $XDG_RUNTIME_DIR ]]; then
+        printf '%s/devstack' "$XDG_RUNTIME_DIR"
+        return 0
+    fi
+    local dir="${TMPDIR:-/tmp}/devstack-$(id -u)"
+    [[ -L $dir ]] && return 1
+    [[ -e $dir && ! -O $dir ]] && return 1
+    mkdir -p -m 700 "$dir" 2>/dev/null || return 1
+    chmod 700 "$dir" 2>/dev/null || true
+    printf '%s' "$dir"
+}
+
+# Archivo de log del `up` en segundo plano, o error si no hay uno seguro.
+mcp_log_file() {
+    local dir log
+    dir=$(mcp_state_dir) || return 1
+    log="$dir/mcp.log"
+    [[ -L $log ]] && return 1
+    [[ -e $log && ! -O $log ]] && return 1
+    printf '%s' "$log"
+}
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [[ -x $SCRIPT_DIR/devstack ]]; then
     DEVSTACK="$SCRIPT_DIR/devstack"
@@ -154,8 +179,14 @@ call_tool() { # call_tool <id-json> <nombre> <args-json>
         # agente puede seguir el avance con devstack_status.
         local force=""
         [[ $(printf '%s' "$args" | jq -r '.force // false' 2>/dev/null) == true ]] && force=--force
-        mkdir -p "${XDG_RUNTIME_DIR:-/tmp}/devstack" 2>/dev/null || true
-        setsid "$DEVSTACK" "$project" up $force >>"${XDG_RUNTIME_DIR:-/tmp}/devstack/mcp.log" 2>&1 &
+        # El log va al runtime del usuario; si no hay uno seguro, se descarta en
+        # vez de escribir en una ruta predecible (otro usuario local podría
+        # pre-crear el directorio y el archivo como symlinks).
+        if mcp_log=$(mcp_log_file); then
+            setsid "$DEVSTACK" "$project" up $force >>"$mcp_log" 2>&1 &
+        else
+            setsid "$DEVSTACK" "$project" up $force >/dev/null 2>&1 &
+        fi
         tool_text "$id" "Levantando $project en segundo plano (mirá devstack_status para seguir el avance)."
         ;;
     devstack_down)
